@@ -1,5 +1,6 @@
 mod engine;
 mod model;
+mod progression;
 
 pub use engine::{LuaEngine, LuaEngineError, LuaLimits};
 pub use model::{
@@ -7,3 +8,4 @@ pub use model::{
     LuaInstallationContext, LuaInteractionContext, LuaModuleManifest, LuaOptionKind,
     MusicOperation,
 };
+pub use progression::{ProgressionMetric, ProgressionOperation};
