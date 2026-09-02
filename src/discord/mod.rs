@@ -1,13 +1,34 @@
 mod commands;
-#[expect(
-    clippy::collapsible_if,
-    reason = "the nested actor/owner hierarchy guard is intentionally explicit until the permission engine is extracted"
-)]
 mod executor;
-#[expect(
-    clippy::result_large_err,
-    reason = "the private Discord response helper currently mirrors Serenity's public error type"
-)]
 mod handler;
 mod music;
 mod progression;
+
+use anyhow::Result;
+use serenity::{
+    Client,
+    all::{ApplicationId, GatewayIntents},
+};
+use songbird::SerenityInit;
+
+use crate::AppState;
+
+pub async fn run(state: AppState) -> Result<()> {
+    let intents = GatewayIntents::GUILDS
+        | GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::GUILD_MESSAGE_REACTIONS
+        | GatewayIntents::GUILD_MEMBERS
+        | GatewayIntents::GUILD_MODERATION
+        | GatewayIntents::GUILD_VOICE_STATES
+        | GatewayIntents::MESSAGE_CONTENT;
+
+    let handler = handler::Handler::new(state.clone());
+    let mut client = Client::builder(&state.config.discord_token, intents)
+        .application_id(ApplicationId::new(state.config.discord_application_id))
+        .event_handler(handler)
+        .register_songbird()
+        .await?;
+
+    client.start_autosharded().await?;
+    Ok(())
+}
