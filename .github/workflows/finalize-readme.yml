@@ -1,0 +1,33 @@
+name: Finalize README
+
+on:
+  push:
+    branches:
+      - feat/rust-lua-platform-foundation-v1
+    paths:
+      - README.project.md
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Replace placeholder README
+        run: |
+          set -euo pipefail
+          mv README.project.md README.md
+          rm .github/workflows/finalize-readme.yml
+      - name: Commit finalized README
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "docs: publish project README"
+          git push
