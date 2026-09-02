@@ -1,0 +1,47 @@
+name: One-time control-plane cleanup
+
+on:
+  push:
+    branches: [feat/control-plane-storage]
+    paths:
+      - .github/workflows/control-plane-cleanup.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: control-plane-cleanup
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/control-plane-storage
+          fetch-depth: 0
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+          components: rustfmt
+
+      - name: Validate and remove bootstrap files
+        run: python3 tools/cleanup-control-plane.py
+
+      - name: Commit clean branch state
+        run: |
+          git config user.name "zuckerbot-automation"
+          git config user.email "84590696+z-u-c-k-e-r@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No cleanup changes"
+            exit 0
+          fi
+          git commit -m "chore(storage): remove one-time bootstrap files"
+          git push origin HEAD:feat/control-plane-storage
