@@ -235,11 +235,11 @@ impl PostgresStore {
         write_profile(&mut transaction, &recipient).await?;
         transaction.commit().await?;
 
-        Ok(CoinTransferOutcome::Completed(CoinTransfer {
+        Ok(CoinTransferOutcome::Completed(Box::new(CoinTransfer {
             sender,
             recipient,
             amount,
-        }))
+        })))
     }
 
     pub async fn give_reputation(

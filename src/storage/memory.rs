@@ -192,11 +192,11 @@ impl MemoryStore {
         self.store_profile(sender.clone());
         self.store_profile(recipient.clone());
 
-        CoinTransferOutcome::Completed(CoinTransfer {
+        CoinTransferOutcome::Completed(Box::new(CoinTransfer {
             sender,
             recipient,
             amount,
-        })
+        }))
     }
 
     pub fn give_reputation(

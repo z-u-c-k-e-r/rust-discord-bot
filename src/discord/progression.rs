@@ -14,17 +14,47 @@ use crate::{
     },
 };
 
-pub async fn execute(
-    ctx: &Context,
-    state: &AppState,
-    module_id: &str,
+#[derive(Clone, Copy)]
+pub(super) struct ProgressionExecutionContext {
     guild_id: Option<GuildId>,
     channel_id: Option<ChannelId>,
     actor_id: Option<UserId>,
     actor_permissions: Permissions,
     command_context: bool,
+}
+
+impl ProgressionExecutionContext {
+    pub(super) const fn new(
+        guild_id: Option<GuildId>,
+        channel_id: Option<ChannelId>,
+        actor_id: Option<UserId>,
+        actor_permissions: Permissions,
+        command_context: bool,
+    ) -> Self {
+        Self {
+            guild_id,
+            channel_id,
+            actor_id,
+            actor_permissions,
+            command_context,
+        }
+    }
+}
+
+pub async fn execute(
+    ctx: &Context,
+    state: &AppState,
+    module_id: &str,
+    execution: ProgressionExecutionContext,
     operation: &ProgressionOperation,
 ) -> Result<Option<String>> {
+    let ProgressionExecutionContext {
+        guild_id,
+        channel_id,
+        actor_id,
+        actor_permissions,
+        command_context,
+    } = execution;
     if module_id != "progression" {
         return Err(anyhow!(
             "operacje progression są zarezerwowane dla zaufanego modułu progression"

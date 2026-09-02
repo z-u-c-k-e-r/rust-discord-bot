@@ -71,7 +71,7 @@ pub struct CoinTransfer {
 
 #[derive(Clone, Debug)]
 pub enum CoinTransferOutcome {
-    Completed(CoinTransfer),
+    Completed(Box<CoinTransfer>),
     InsufficientFunds { balance: i64 },
     SameAccount,
 }

@@ -400,11 +400,13 @@ async fn execute_action(
                 ctx,
                 state,
                 module_id,
-                origin.guild_id,
-                origin.channel_id,
-                origin.actor_id,
-                origin.actor_permissions,
-                origin.enforce_actor_permissions,
+                progression::ProgressionExecutionContext::new(
+                    origin.guild_id,
+                    origin.channel_id,
+                    origin.actor_id,
+                    origin.actor_permissions,
+                    origin.enforce_actor_permissions,
+                ),
                 operation,
             )
             .await
