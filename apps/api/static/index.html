@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Panel zarządzania ZuckerBot">
+  <title>ZuckerBot Control</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="ZuckerBot Control">
+        <span class="brand-mark" aria-hidden="true">Z</span>
+        <span>
+          <strong>ZuckerBot</strong>
+          <small>Control plane</small>
+        </span>
+      </a>
+
+      <nav aria-label="Nawigacja główna">
+        <a class="nav-item active" href="#overview">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z"/></svg>
+          Przegląd
+        </a>
+        <a class="nav-item disabled" href="#modules" aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Zm-7.5 9L12 15l7.5-4L21 12l-9 5-9-5 1.5-1Zm0 5L12 20l7.5-4L21 17l-9 5-9-5 1.5-1Z"/></svg>
+          Moduły
+        </a>
+        <a class="nav-item disabled" href="#automation" aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2h10v4h3v6h-2V8H6v8h5v2H4V6h3V2Zm2 2v2h6V4H9Zm6 8 6 4-6 4v-3H9v-2h6v-3Z"/></svg>
+          Automatyzacje
+        </a>
+        <a class="nav-item disabled" href="#lua" aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.7 5.3 2 12l6.7 6.7 1.4-1.4L4.8 12l5.3-5.3-1.4-1.4Zm6.6 0-1.4 1.4 5.3 5.3-5.3 5.3 1.4 1.4L22 12l-6.7-6.7Z"/></svg>
+          Skrypty Lua
+        </a>
+        <a class="nav-item disabled" href="#audit" aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6V2Zm2 2v16h10V8h-4V4H8Zm2 8h6v2h-6v-2Zm0 4h6v2h-6v-2Z"/></svg>
+          Dziennik zmian
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <span>
+          <strong id="sidebar-status">Sprawdzanie usługi</strong>
+          <small id="sidebar-version">API</small>
+        </span>
+      </div>
+    </aside>
+
+    <main id="overview">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">PLATFORM FOUNDATION</p>
+          <h1>Centrum sterowania</h1>
+        </div>
+        <button class="primary-button" disabled title="Logowanie Discord OAuth2 pojawi się w kolejnym etapie">
+          Połącz z Discordem
+        </button>
+      </header>
+
+      <section class="hero-panel">
+        <div>
+          <span class="chip">Rust + Lua 5.4</span>
+          <h2>Jedna platforma do zarządzania całym serwerem Discord</h2>
+          <p>Gateway, bezpieczne rozszerzenia Lua, muzyka, automatyzacje, moderacja i panel WWW rozwijane jako oddzielne, skalowalne moduły.</p>
+        </div>
+        <div class="hero-metric">
+          <span>Stan API</span>
+          <strong id="health-state">Ładowanie</strong>
+          <small id="uptime">Czas działania: —</small>
+        </div>
+      </section>
+
+      <section class="section-heading" id="modules">
+        <div>
+          <p class="eyebrow">ARCHITEKTURA</p>
+          <h2>Fundament platformy</h2>
+        </div>
+        <span id="module-count" class="muted">— moduły</span>
+      </section>
+
+      <section id="module-grid" class="module-grid" aria-live="polite">
+        <article class="module-card skeleton"></article>
+        <article class="module-card skeleton"></article>
+        <article class="module-card skeleton"></article>
+        <article class="module-card skeleton"></article>
+      </section>
+
+      <section class="roadmap-panel">
+        <div>
+          <p class="eyebrow">NASTĘPNE WARSTWY</p>
+          <h2>Od działającego rdzenia do pełnej platformy</h2>
+        </div>
+        <ol>
+          <li><span>01</span><div><strong>Discord OAuth2 i RBAC</strong><small>Logowanie, wybór serwera i kontrola uprawnień.</small></div></li>
+          <li><span>02</span><div><strong>Moderacja i automatyzacje</strong><small>Sprawy, filtry, akcje, harmonogramy i audyt.</small></div></li>
+          <li><span>03</span><div><strong>Muzyka i społeczność</strong><small>Kolejki, dostawcy audio, poziomy, role i wydarzenia.</small></div></li>
+          <li><span>04</span><div><strong>Skalowanie</strong><small>Shardy, workerzy, Redis, metryki i odporność na awarie.</small></div></li>
+        </ol>
+      </section>
+    </main>
+  </div>
+
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
