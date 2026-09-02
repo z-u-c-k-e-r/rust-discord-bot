@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::progression::ProgressionOperation;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LuaModuleManifest {
     pub id: String,
@@ -234,6 +236,9 @@ pub enum LuaAction {
         #[serde(default)]
         query: Option<String>,
     },
+    Progression {
+        operation: ProgressionOperation,
+    },
     Audit {
         event: String,
         #[serde(default)]
@@ -313,6 +318,7 @@ impl LuaAction {
                 }
                 Ok(())
             }
+            Self::Progression { operation } => operation.validate(),
             Self::Audit { event, .. } => {
                 if event.trim().is_empty() || event.len() > 64 {
                     return Err("audit event must contain 1 to 64 bytes".to_owned());
