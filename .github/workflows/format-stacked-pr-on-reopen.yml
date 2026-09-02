@@ -1,0 +1,41 @@
+name: Format progression PR once
+
+on:
+  pull_request:
+    types:
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.event.pull_request.head.ref == 'feat/progression-economy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out progression branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/progression-economy
+
+      - name: Install pinned Rust formatter
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt
+
+      - name: Format and push the exact rustfmt result
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          if git diff --quiet; then
+            echo "No formatting changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit -m "style: apply cargo fmt to progression stack"
+          git push origin HEAD:feat/progression-economy
