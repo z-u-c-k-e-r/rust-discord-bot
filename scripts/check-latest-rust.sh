@@ -11,17 +11,23 @@ if [[ ! "${pinned}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+manifest_file="$(mktemp)"
+trap 'rm -f "${manifest_file}"' EXIT
+
+curl --fail --silent --show-error --location \
+  --proto '=https' --tlsv1.2 --retry 3 \
+  --output "${manifest_file}" \
+  "${manifest_url}"
+
 latest="$(
-  curl --fail --silent --show-error --location \
-    --proto '=https' --tlsv1.2 --retry 3 "${manifest_url}" \
-  | awk '
+  awk '
       $0 == "[pkg.rust]" { in_rust = 1; next }
       in_rust && $1 == "version" {
         gsub(/"/, "", $3)
         print $3
         exit
       }
-    '
+    ' "${manifest_file}"
 )"
 
 if [[ ! "${latest}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
