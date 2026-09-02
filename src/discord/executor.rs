@@ -14,10 +14,7 @@ use serenity::{
     client::Context,
 };
 
-use crate::{
-    AppState,
-    lua::{LuaAction, MusicOperation},
-};
+use crate::{AppState, lua::LuaAction};
 
 use super::music;
 

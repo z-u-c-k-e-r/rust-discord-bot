@@ -24,7 +24,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let discord_application_id = required("DISCORD_APPLICATION_ID")?
+        let discord_application_id: u64 = required("DISCORD_APPLICATION_ID")?
             .parse()
             .context("DISCORD_APPLICATION_ID must be an unsigned integer")?;
 
