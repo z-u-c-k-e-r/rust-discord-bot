@@ -1,0 +1,166 @@
+name: Control-plane storage gate
+
+on:
+  push:
+    branches: [feat/control-plane-storage]
+    paths:
+      - .github/workflows/control-plane-gate.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: control-plane-storage-gate
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: zuckerbot
+          POSTGRES_USER: zuckerbot
+          POSTGRES_PASSWORD: zuckerbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zuckerbot -d zuckerbot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://zuckerbot:zuckerbot@127.0.0.1:5432/zuckerbot
+      REDIS_URL: redis://127.0.0.1:6379
+      DATABASE_MAX_CONNECTIONS: 5
+      DATABASE_ACQUIRE_TIMEOUT_MS: 3000
+      DEPENDENCY_TIMEOUT_MS: 2000
+      RUN_DATABASE_MIGRATIONS: "true"
+
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: feat/control-plane-storage
+          fetch-depth: 0
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+          components: clippy,rustfmt
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends cmake libopus-dev pkg-config
+
+      - name: Resolve dependencies
+        run: cargo generate-lockfile
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run unit and contract tests
+        run: cargo test --workspace
+
+      - name: Run live storage integration
+        run: cargo test -p zuckerbot-storage --test infrastructure -- --ignored --test-threads=1
+
+      - name: Build complete workspace
+        run: cargo build --workspace
+
+      - name: Validate web and Compose
+        run: |
+          node --check apps/api/static/app.js
+          cp .env.example .env
+          docker compose config --quiet
+
+      - name: Smoke-test liveness and readiness
+        env:
+          API_BIND_ADDRESS: 127.0.0.1:18080
+          RUST_LOG: warn
+        run: |
+          target/debug/zuckerbot-api > /tmp/zuckerbot-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18080/health | grep --quiet '"status":"ok"' \
+              && curl --fail --silent http://127.0.0.1:18080/ready | grep --quiet '"status":"ready"'; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat /tmp/zuckerbot-api.log
+          exit 1
+
+      - name: Record verified checkpoint
+        env:
+          VERIFIED_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          status = Path("STATUS.md")
+          text = status.read_text()
+          marker = "## Zweryfikowany checkpoint storage/readiness"
+          block = f"""
+
+          {marker}
+
+          - commit przed closeoutem: `{os.environ['VERIFIED_SHA']}`;
+          - workflow: `Control-plane storage gate #{os.environ['RUN_NUMBER']}`, run `{os.environ['RUN_ID']}`;
+          - zaliczone: rustfmt, Clippy `-D warnings`, testy workspace, PostgreSQL/Redis integration, build, JavaScript, Compose oraz smoke test `/health` i `/ready`;
+          - finalny commit closeout wymaga jeszcze zwykłego exact-head CI pull requestu.
+          """
+          if marker not in text:
+              status.write_text(text + block)
+
+          worklog = Path("WORKLOG.md")
+          text = worklog.read_text()
+          marker = "### Pierwszy zielony checkpoint storage"
+          block = f"""
+
+          {marker}
+
+          Commit `{os.environ['VERIFIED_SHA']}` przeszedł workflow `Control-plane storage gate #{os.environ['RUN_NUMBER']}` (`{os.environ['RUN_ID']}`), obejmujący prawdziwe PostgreSQL i Redis, migracje, konflikt wersji, pełny Clippy, testy, build oraz uruchomienie API. Po tym wyniku dodano closeout; jego dokładny SHA musi przejść standardowy CI PR.
+          """
+          if marker not in text:
+              worklog.write_text(text + block)
+          PY
+
+          rm -f Cargo.lock .env .github/workflows/control-plane-gate.yml
+
+          git config user.name "zuckerbot-automation"
+          git config user.email "84590696+z-u-c-k-e-r@users.noreply.github.com"
+          git add -A
+          git commit -m "docs(storage): record verified integration checkpoint"
+          git push origin HEAD:feat/control-plane-storage
+
+      - name: Comment checkpoint on pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment 8 --body "Storage/readiness gate run **${GITHUB_RUN_ID}** finished with job status **${{ job.status }}**. The workflow covers live PostgreSQL 17, Redis 8, migrations, optimistic-version conflicts, Clippy, tests, full build and API liveness/readiness smoke checks." || true
