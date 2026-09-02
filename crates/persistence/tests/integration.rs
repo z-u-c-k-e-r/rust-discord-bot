@@ -1,18 +1,8 @@
-use std::{
-    env,
-    time::Duration,
-};
+use std::{env, time::Duration};
 
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use zuckerbot_persistence::{
-    ControlPlaneStore,
-    PutGuildModule,
-    StoreError,
-};
+use zuckerbot_persistence::{ControlPlaneStore, PutGuildModule, StoreError};
 
 fn test_store() -> Option<ControlPlaneStore> {
     let database_url = env::var("TEST_DATABASE_URL").ok()?;
@@ -96,7 +86,87 @@ async fn module_writes_are_versioned_transactional_and_audited() {
         .unwrap()
         .unwrap();
     assert_eq!(persisted.configuration["mode"], "enforce");
-    assert_eq!(store.audit_event_count(&guild_id, &request_id).await.unwrap(), 1);
+    assert_eq!(
+        store
+            .audit_event_count(&guild_id, &request_id)
+            .await
+            .unwrap(),
+        1
+    );
+
+    store.delete_guild(&guild_id).await.unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_initial_write_allows_exactly_one_creator() {
+    let Some(store) = test_store() else {
+        return;
+    };
+    store.migrate().await.unwrap();
+
+    let guild_id = snowflake_from_uuid();
+    let actor_user_id = snowflake_from_uuid();
+    let left_store = store.clone();
+    let right_store = store.clone();
+    let left_guild_id = guild_id.clone();
+    let right_guild_id = guild_id.clone();
+    let left_actor_user_id = actor_user_id.clone();
+
+    let left = async move {
+        left_store
+            .put_guild_module(PutGuildModule {
+                guild_id: left_guild_id,
+                module_id: "roles".to_owned(),
+                enabled: true,
+                configuration: serde_json::json!({ "writer": "left" }),
+                expected_version: None,
+                actor_user_id: left_actor_user_id,
+                request_id: format!("integration-{}", Uuid::new_v4()),
+            })
+            .await
+    };
+    let right = async move {
+        right_store
+            .put_guild_module(PutGuildModule {
+                guild_id: right_guild_id,
+                module_id: "roles".to_owned(),
+                enabled: true,
+                configuration: serde_json::json!({ "writer": "right" }),
+                expected_version: None,
+                actor_user_id,
+                request_id: format!("integration-{}", Uuid::new_v4()),
+            })
+            .await
+    };
+
+    let (left_result, right_result) = tokio::join!(left, right);
+    let results = [&left_result, &right_result];
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| {
+                matches!(
+                    result,
+                    Err(StoreError::VersionConflict {
+                        current_version: Some(1)
+                    })
+                )
+            })
+            .count(),
+        1
+    );
+
+    let persisted = store
+        .get_guild_module(&guild_id, "roles")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted.version, 1);
+    assert!(matches!(
+        persisted.configuration["writer"].as_str(),
+        Some("left" | "right")
+    ));
 
     store.delete_guild(&guild_id).await.unwrap();
 }

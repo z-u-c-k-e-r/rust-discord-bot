@@ -1,9 +1,4 @@
-use std::{
-    env, fmt,
-    net::SocketAddr,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{env, fmt, net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 
@@ -113,8 +108,7 @@ impl ApiConfig {
             database_url: optional("DATABASE_URL").unwrap_or_else(|| {
                 "postgres://zuckerbot:zuckerbot@localhost:5432/zuckerbot".to_owned()
             }),
-            redis_url: optional("REDIS_URL")
-                .unwrap_or_else(|| "redis://localhost:6379".to_owned()),
+            redis_url: optional("REDIS_URL").unwrap_or_else(|| "redis://localhost:6379".to_owned()),
             postgres_max_connections: parse_or_default("POSTGRES_MAX_CONNECTIONS", 10)?,
             dependency_timeout: Duration::from_millis(parse_or_default(
                 "DEPENDENCY_TIMEOUT_MS",

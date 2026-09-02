@@ -1,24 +1,11 @@
-use std::{
-    fmt,
-    str::FromStr,
-    time::Duration,
-};
+use std::{fmt, str::FromStr, time::Duration};
 
 use redis::aio::MultiplexedConnection;
-use serde::{
-    Deserialize,
-    Serialize,
-    de::DeserializeOwned,
-};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{
-    PgPool,
-    Row,
-    postgres::{
-        PgConnectOptions,
-        PgPoolOptions,
-        PgRow,
-    },
+    PgPool, Row,
+    postgres::{PgConnectOptions, PgPoolOptions, PgRow},
 };
 use thiserror::Error;
 use tokio::time::timeout;
@@ -120,9 +107,7 @@ pub enum StoreError {
     #[error(transparent)]
     Validation(#[from] ConfigurationValidationError),
     #[error("module version conflict")]
-    VersionConflict {
-        current_version: Option<i64>,
-    },
+    VersionConflict { current_version: Option<i64> },
 }
 
 impl ControlPlaneStore {
@@ -267,7 +252,7 @@ impl ControlPlaneStore {
                 updated_by,
                 EXTRACT(EPOCH FROM updated_at)::BIGINT AS updated_at_unix
             FROM guild_modules
-            WHERE guild_id = $1 AND module_id = $2
+            WHERE guild_id = $1 AND module_id = $2 AND version > 0
             "#,
         )
         .bind(guild_id)
@@ -275,7 +260,10 @@ impl ControlPlaneStore {
         .fetch_optional(&self.postgres)
         .await?;
 
-        row.as_ref().map(module_from_row).transpose().map_err(StoreError::from)
+        row.as_ref()
+            .map(module_from_row)
+            .transpose()
+            .map_err(StoreError::from)
     }
 
     pub async fn list_guild_modules(
@@ -295,7 +283,7 @@ impl ControlPlaneStore {
                 updated_by,
                 EXTRACT(EPOCH FROM updated_at)::BIGINT AS updated_at_unix
             FROM guild_modules
-            WHERE guild_id = $1
+            WHERE guild_id = $1 AND version > 0
             ORDER BY module_id
             "#,
         )
@@ -327,7 +315,27 @@ impl ControlPlaneStore {
         .execute(&mut *transaction)
         .await?;
 
-        let existing_row = sqlx::query(
+        sqlx::query(
+            r#"
+            INSERT INTO guild_modules (
+                guild_id,
+                module_id,
+                enabled,
+                configuration,
+                version,
+                updated_by,
+                updated_at
+            )
+            VALUES ($1, $2, FALSE, '{}'::jsonb, 0, NULL, NOW())
+            ON CONFLICT (guild_id, module_id) DO NOTHING
+            "#,
+        )
+        .bind(&input.guild_id)
+        .bind(&input.module_id)
+        .execute(&mut *transaction)
+        .await?;
+
+        let current_row = sqlx::query(
             r#"
             SELECT
                 guild_id,
@@ -344,49 +352,36 @@ impl ControlPlaneStore {
         )
         .bind(&input.guild_id)
         .bind(&input.module_id)
-        .fetch_optional(&mut *transaction)
+        .fetch_one(&mut *transaction)
         .await?;
-        let existing = existing_row
-            .as_ref()
-            .map(module_from_row)
-            .transpose()?;
+        let current = module_from_row(&current_row)?;
 
-        match (&existing, input.expected_version) {
-            (None, None) => {}
-            (Some(current), Some(expected)) if current.version == expected => {}
-            (None, Some(_)) => {
+        match (current.version, input.expected_version) {
+            (0, None) => {}
+            (0, Some(_)) => {
                 return Err(StoreError::VersionConflict {
                     current_version: None,
                 });
             }
-            (Some(current), _) => {
+            (current_version, Some(expected)) if current_version == expected => {}
+            (current_version, _) => {
                 return Err(StoreError::VersionConflict {
-                    current_version: Some(current.version),
+                    current_version: Some(current_version),
                 });
             }
         }
 
-        let next_version = existing
-            .as_ref()
-            .map_or(1, |current| current.version.saturating_add(1));
+        let next_version = current.version.saturating_add(1);
         let updated_at_unix: i64 = sqlx::query_scalar(
             r#"
-            INSERT INTO guild_modules (
-                guild_id,
-                module_id,
-                enabled,
-                configuration,
-                version,
-                updated_by,
-                updated_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, NOW())
-            ON CONFLICT (guild_id, module_id) DO UPDATE SET
-                enabled = EXCLUDED.enabled,
-                configuration = EXCLUDED.configuration,
-                version = EXCLUDED.version,
-                updated_by = EXCLUDED.updated_by,
+            UPDATE guild_modules
+            SET
+                enabled = $3,
+                configuration = $4,
+                version = $5,
+                updated_by = $6,
                 updated_at = NOW()
+            WHERE guild_id = $1 AND module_id = $2
             RETURNING EXTRACT(EPOCH FROM updated_at)::BIGINT
             "#,
         )
@@ -408,10 +403,11 @@ impl ControlPlaneStore {
             updated_by: Some(input.actor_user_id.clone()),
             updated_at_unix,
         };
-        let before_state = existing
-            .as_ref()
-            .map(serde_json::to_value)
-            .transpose()?;
+        let before_state = if current.version == 0 {
+            None
+        } else {
+            Some(serde_json::to_value(&current)?)
+        };
         let after_state = serde_json::to_value(&updated)?;
 
         sqlx::query(
@@ -535,9 +531,9 @@ fn validate_put_input(input: &PutGuildModule) -> Result<(), ConfigurationValidat
     if !input.configuration.is_object() {
         return Err(ConfigurationValidationError::ConfigurationMustBeObject);
     }
-    if serde_json::to_vec(&input.configuration)
-        .map_or(true, |serialized| serialized.len() > MAX_MODULE_CONFIGURATION_BYTES)
-    {
+    if serde_json::to_vec(&input.configuration).map_or(true, |serialized| {
+        serialized.len() > MAX_MODULE_CONFIGURATION_BYTES
+    }) {
         return Err(ConfigurationValidationError::ConfigurationTooLarge);
     }
     if input.expected_version.is_some_and(|version| version <= 0) {
@@ -560,9 +556,7 @@ fn validate_guild_id(value: &str) -> Result<(), ConfigurationValidationError> {
 fn validate_module_id(value: &str) -> Result<(), ConfigurationValidationError> {
     let is_valid = (1..=64).contains(&value.len())
         && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || matches!(byte, b'-' | b'_')
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
         });
     if is_valid {
         Ok(())
@@ -577,9 +571,9 @@ fn is_snowflake(value: &str) -> bool {
 
 fn validate_ephemeral_key(key: &str) -> Result<(), StoreError> {
     let is_valid = (1..=MAX_EPHEMERAL_KEY_LENGTH).contains(&key.len())
-        && key.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_')
-        });
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_'));
     if is_valid {
         Ok(())
     } else {

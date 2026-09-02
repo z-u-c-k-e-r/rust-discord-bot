@@ -1,64 +1,30 @@
 use std::{
     borrow::Cow,
     sync::Arc,
-    time::{
-        Duration,
-        Instant,
-    },
+    time::{Duration, Instant},
 };
 
-use anyhow::{
-    Context,
-    Result,
-};
+use anyhow::{Context, Result};
 use axum::{
-    Json,
-    Router,
-    extract::{
-        Path,
-        State,
-    },
-    http::{
-        HeaderMap,
-        StatusCode,
-        header::AUTHORIZATION,
-    },
-    response::{
-        Html,
-        IntoResponse,
-    },
+    Json, Router,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    response::{Html, IntoResponse},
     routing::get,
 };
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{
-    Digest,
-    Sha256,
-};
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tokio::net::TcpListener;
-use tower_http::{
-    limit::RequestBodyLimitLayer,
-    timeout::TimeoutLayer,
-    trace::TraceLayer,
-};
-use tracing::{
-    error,
-    info,
-};
+use tower_http::{limit::RequestBodyLimitLayer, timeout::TimeoutLayer, trace::TraceLayer};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 use zuckerbot_config::ApiConfig;
 use zuckerbot_persistence::{
-    ConfigurationValidationError,
-    ControlPlaneStore,
-    GuildModuleConfiguration,
-    PutGuildModule,
-    ReadinessReport,
-    StoreError,
+    ConfigurationValidationError, ControlPlaneStore, GuildModuleConfiguration, PutGuildModule,
+    ReadinessReport, StoreError,
 };
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
@@ -333,13 +299,7 @@ async fn put_module(
     } else {
         StatusCode::OK
     };
-    Ok((
-        status,
-        Json(ModuleWriteResponse {
-            request_id,
-            module,
-        }),
-    ))
+    Ok((status, Json(ModuleWriteResponse { request_id, module })))
 }
 
 impl DevelopmentAuth {
@@ -382,11 +342,7 @@ impl AppState {
 }
 
 impl ApiError {
-    fn new(
-        status: StatusCode,
-        code: &'static str,
-        message: impl Into<Cow<'static, str>>,
-    ) -> Self {
+    fn new(status: StatusCode, code: &'static str, message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             status,
             code,
@@ -463,9 +419,7 @@ fn validation_code(error: &ConfigurationValidationError) -> &'static str {
         ConfigurationValidationError::InvalidGuildId => "invalid_guild_id",
         ConfigurationValidationError::InvalidActorUserId => "invalid_actor_user_id",
         ConfigurationValidationError::InvalidModuleId => "invalid_module_id",
-        ConfigurationValidationError::ConfigurationMustBeObject => {
-            "configuration_must_be_object"
-        }
+        ConfigurationValidationError::ConfigurationMustBeObject => "configuration_must_be_object",
         ConfigurationValidationError::ConfigurationTooLarge => "configuration_too_large",
         ConfigurationValidationError::InvalidExpectedVersion => "invalid_expected_version",
         ConfigurationValidationError::InvalidRequestId => "invalid_request_id",
@@ -519,14 +473,9 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_static(
-                "Bearer 0123456789012345678901234567890123456789",
-            ),
+            HeaderValue::from_static("Bearer 0123456789012345678901234567890123456789"),
         );
-        assert_eq!(
-            auth.authorize(&headers).unwrap(),
-            "123456789012345678"
-        );
+        assert_eq!(auth.authorize(&headers).unwrap(), "123456789012345678");
 
         headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer wrong"));
         assert!(auth.authorize(&headers).is_err());
