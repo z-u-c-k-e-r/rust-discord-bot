@@ -4,7 +4,7 @@ A secure, Lua-scriptable Discord automation platform with a high-performance Rus
 
 ZuckerBot is designed as an extensible alternative to closed all-in-one bots. Server behavior lives in versioned Lua modules; Discord connectivity, authorization, storage, rate-sensitive operations and privileged actions remain behind a validated Rust API.
 
-> **Current status:** foundation release. The repository already contains the runtime, dashboard, OAuth2 login, PostgreSQL migrations, Discord command registration, voice queue integration and example Lua modules. The complete product scope is tracked in [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md).
+> **Current status:** foundation release. The repository already contains the runtime, dashboard, OAuth2 login, PostgreSQL migrations, Discord command registration, voice queue integration and example Lua modules. The complete product scope is tracked in [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md), while [`docs/VERSION_POLICY.md`](docs/VERSION_POLICY.md) defines the latest-stable dependency policy.
 
 ## Why Rust plus Lua?
 
@@ -43,7 +43,7 @@ A Lua script never receives the Discord bot token, raw database credentials, unr
 - PostgreSQL migrations with an in-memory development fallback
 - audit records for privileged actions and dashboard changes
 - Docker Compose development deployment
-- CI formatting, linting and tests
+- CI formatting, linting, tests, release build and production-container build
 
 Bundled Lua modules:
 
@@ -87,8 +87,8 @@ Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for trust boundaries and req
 
 ### Requirements
 
-- Rust 1.88
-- PostgreSQL 15 or newer, unless using the volatile in-memory fallback
+- Rust 1.98.0; CI verifies that the pinned toolchain matches Rust's current stable channel
+- PostgreSQL 18.6 through the supplied Compose stack, unless using the volatile in-memory fallback
 - a Discord application with a bot user
 - `ffmpeg`, `yt-dlp` and Opus runtime support for music
 
@@ -195,9 +195,12 @@ tests/           Lua runtime and safety tests
 ## Development commands
 
 ```bash
+bash scripts/check-latest-rust.sh
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
+cargo build --release
+docker build --tag zuckerbot:local .
 ```
 
 ## Music and external services
