@@ -16,7 +16,7 @@ use serenity::{
 
 use crate::{AppState, lua::LuaAction};
 
-use super::music;
+use super::{music, progression};
 
 struct ActionOrigin {
     guild_id: Option<GuildId>,
@@ -394,6 +394,20 @@ async fn execute_action(
             )
             .await?;
             Ok(Some(status))
+        }
+        LuaAction::Progression { operation } => {
+            progression::execute(
+                ctx,
+                state,
+                module_id,
+                origin.guild_id,
+                origin.channel_id,
+                origin.actor_id,
+                origin.actor_permissions,
+                origin.enforce_actor_permissions,
+                operation,
+            )
+            .await
         }
         LuaAction::Audit { event, data } => {
             state
