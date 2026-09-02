@@ -48,7 +48,10 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo fmt --all -- --check 2>&1 | tee rustfmt.log
 
       - name: Run Clippy
         shell: bash
@@ -74,6 +77,7 @@ jobs:
         with:
           name: rust-diagnostics-${{ github.run_id }}-${{ github.job }}
           path: |
+            rustfmt.log
             clippy.log
             tests.log
             release-build.log
