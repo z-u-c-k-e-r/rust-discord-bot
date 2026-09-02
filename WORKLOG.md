@@ -35,3 +35,35 @@ Oczekuje na pierwszy przebieg CI dla commita implementacyjnego.
 - API Lua jest celowo minimalne; przed edytorem WWW potrzebne są capabilities i silniejsza izolacja tenantów.
 - Voice manager nie jest jeszcze odtwarzaczem; kolejka i providery powstaną po trwałej konfiguracji.
 - Pierwszym kolejnym etapem powinny być OAuth2/RBAC, SQLx/Redis oraz wersjonowany registry modułów.
+
+## 2026-09-02 — pierwszy pełny zielony przebieg
+
+### Wykryte problemy
+
+Pierwszy run `33662598113` zatrzymał się na `rustfmt`, zanim rozpoczęła się kompilacja. Log wskazał wszystkie wymagane zmiany formatowania. Dodatkowo workflow pull requestu domyślnie checkoutował tymczasowy merge commit GitHuba, co nie spełniało wymogu kontroli dokładnego SHA głowy.
+
+### Poprawki
+
+- zastosowano dokładny wynik `cargo fmt` dla wszystkich wskazanych plików;
+- checkout ustawiono na `github.event.pull_request.head.sha` z fallbackiem dla push;
+- dodano osobny krok porównujący `git rev-parse HEAD` z oczekiwanym SHA;
+- walidacja Compose tworzy lokalny `.env` z bezpiecznego przykładu;
+- zachowano generowany `Cargo.lock` jako artefakt workflow.
+
+### Zweryfikowany wynik
+
+Commit `e9ad0cadbfe20e62450fe61a52fc82fe4f89be78` przeszedł pełny workflow `CI #2`, run `33663086930`:
+
+- exact-head checkout i jawna weryfikacja SHA;
+- rustfmt;
+- Clippy dla całego workspace i wszystkich targetów z `-D warnings`;
+- testy wszystkich pakietów;
+- pełny build workspace;
+- kontrola JavaScript panelu;
+- walidacja Docker Compose;
+- uruchomienie API i smoke test `/health`;
+- publikacja artefaktu `Cargo.lock` o digest `sha256:fbdbab2a1e6e3ebd3f117fdf2803f2fc261a5e4364a11e61a2e24cd5e459f3fd`.
+
+### Closeout
+
+Po pierwszym zielonym runie dodano P3 handoff, datowaną analizę oficjalnego Discord API, aktualny status oraz test wczytujący rzeczywiste pluginy `core` i `fun`. Commit closeout wymaga drugiego pełnego zielonego przebiegu dla dokładnego finalnego SHA.
