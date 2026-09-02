@@ -174,7 +174,10 @@ fn build_router(state: Arc<AppState>) -> Router {
         )
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(MAX_REQUEST_BODY_BYTES))
-        .layer(TimeoutLayer::new(Duration::from_secs(15)))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(15),
+        ))
         .layer(TraceLayer::new_for_http())
 }
 
