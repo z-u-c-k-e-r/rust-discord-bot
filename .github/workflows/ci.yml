@@ -48,16 +48,41 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo fmt --all -- --check 2>&1 | tee rustfmt.log
 
       - name: Run Clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --locked --all-targets --all-features -- -D warnings 2>&1 | tee clippy.log
 
       - name: Run tests
-        run: cargo test --locked --all-features
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --all-features 2>&1 | tee tests.log
 
       - name: Build release binary
-        run: cargo build --locked --release
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --locked --release 2>&1 | tee release-build.log
+
+      - name: Upload Rust diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-diagnostics-${{ github.run_id }}-${{ github.job }}
+          path: |
+            rustfmt.log
+            clippy.log
+            tests.log
+            release-build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   container:
     name: Build production container
@@ -69,4 +94,16 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Build image
-        run: docker build --tag zuckerbot:ci .
+        shell: bash
+        run: |
+          set -o pipefail
+          docker build --tag zuckerbot:ci . 2>&1 | tee docker-build.log
+
+      - name: Upload container diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: container-diagnostics-${{ github.run_id }}-${{ github.job }}
+          path: docker-build.log
+          if-no-files-found: error
+          retention-days: 7
