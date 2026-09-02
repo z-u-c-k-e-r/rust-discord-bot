@@ -1,0 +1,47 @@
+name: One-time control-plane finalizer
+
+on:
+  push:
+    branches: [feat/control-plane-storage]
+    paths:
+      - .github/workflows/control-plane-finalize.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: control-plane-finalize
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/control-plane-storage
+          fetch-depth: 0
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+          components: rustfmt
+
+      - name: Apply final safety fixes
+        run: python3 tools/finalize-control-plane.py
+
+      - name: Commit finalized implementation
+        run: |
+          git config user.name "zuckerbot-automation"
+          git config user.email "84590696+z-u-c-k-e-r@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No finalization changes"
+            exit 0
+          fi
+          git commit -m "fix(storage): finalize migration and readiness wiring"
+          git push origin HEAD:feat/control-plane-storage
