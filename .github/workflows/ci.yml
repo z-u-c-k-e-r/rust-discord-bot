@@ -82,8 +82,16 @@ jobs:
             clippy.log
             tests.log
             release-build.log
+            src/discord/executor.rs
+            src/discord/handler.rs
+            src/discord/progression.rs
+            src/lua/engine.rs
+            src/lua/model.rs
+            src/lua/progression.rs
+            src/storage/memory.rs
+            src/storage/postgres.rs
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 1
 
   container:
     name: Build production container
