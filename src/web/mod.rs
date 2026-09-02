@@ -39,10 +39,7 @@ pub async fn serve(app: AppState) -> Result<()> {
         .route("/api/session", get(auth::current_session))
         .route("/api/logout", post(auth::logout))
         .route("/api/modules", get(routes::list_modules))
-        .route(
-            "/api/guilds/{guild_id}/modules",
-            get(routes::guild_modules),
-        )
+        .route("/api/guilds/{guild_id}/modules", get(routes::guild_modules))
         .route(
             "/api/guilds/{guild_id}/modules/{module_id}",
             put(routes::update_guild_module),

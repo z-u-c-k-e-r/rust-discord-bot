@@ -186,9 +186,7 @@ async fn execute_action(
     action: &LuaAction,
 ) -> Result<Option<String>> {
     if let Some(required) = required_permission(action) {
-        if origin.enforce_actor_permissions
-            && !has_permission(origin.actor_permissions, required)
-        {
+        if origin.enforce_actor_permissions && !has_permission(origin.actor_permissions, required) {
             return Err(anyhow!(
                 "wywołujący nie ma wymaganych uprawnień: {required:?}"
             ));
@@ -356,7 +354,10 @@ async fn execute_action(
             let messages = channel_id
                 .messages(&ctx.http, GetMessages::new().limit(*amount))
                 .await?;
-            let message_ids = messages.iter().map(|message| message.id).collect::<Vec<_>>();
+            let message_ids = messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>();
             if message_ids.len() == 1 {
                 channel_id.delete_message(&ctx.http, message_ids[0]).await?;
             } else if !message_ids.is_empty() {
@@ -382,7 +383,8 @@ async fn execute_action(
                 .actor_id
                 .ok_or_else(|| anyhow!("music actions require a user context"))?;
             let status =
-                music::execute(ctx, state, guild_id, actor_id, *operation, query.as_deref()).await?;
+                music::execute(ctx, state, guild_id, actor_id, *operation, query.as_deref())
+                    .await?;
             audit_action(
                 state,
                 origin,
@@ -432,9 +434,7 @@ fn required_permission(action: &LuaAction) -> Option<Permissions> {
         LuaAction::TimeoutMember { .. } => Some(Permissions::MODERATE_MEMBERS),
         LuaAction::KickMember { .. } => Some(Permissions::KICK_MEMBERS),
         LuaAction::BanMember { .. } => Some(Permissions::BAN_MEMBERS),
-        LuaAction::AddRole { .. } | LuaAction::RemoveRole { .. } => {
-            Some(Permissions::MANAGE_ROLES)
-        }
+        LuaAction::AddRole { .. } | LuaAction::RemoveRole { .. } => Some(Permissions::MANAGE_ROLES),
         _ => None,
     }
 }

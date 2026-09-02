@@ -115,9 +115,11 @@ fn validate_source(state: &AppState, query: &str) -> Result<()> {
         .host_str()
         .ok_or_else(|| anyhow!("adres źródła muzyki nie zawiera hosta"))?
         .to_ascii_lowercase();
-    let allowed = state.config.music_allowed_hosts.iter().any(|candidate| {
-        host == *candidate || host.ends_with(&format!(".{candidate}"))
-    });
+    let allowed = state
+        .config
+        .music_allowed_hosts
+        .iter()
+        .any(|candidate| host == *candidate || host.ends_with(&format!(".{candidate}")));
     if !allowed {
         return Err(anyhow!(
             "host {host} nie znajduje się na liście MUSIC_ALLOWED_HOSTS"

@@ -190,7 +190,7 @@ impl LuaAction {
                 validate_snowflake(user_id)?;
                 if *seconds == 0 || *seconds > 2_419_200 {
                     return Err(
-                        "timeout seconds must be between 1 and 2419200 (28 days)".to_owned(),
+                        "timeout seconds must be between 1 and 2419200 (28 days)".to_owned()
                     );
                 }
                 validate_reason(reason)
@@ -272,7 +272,10 @@ fn validate_content(content: &str) -> Result<(), String> {
 }
 
 fn validate_reason(reason: &Option<String>) -> Result<(), String> {
-    if reason.as_ref().is_some_and(|value| value.chars().count() > 512) {
+    if reason
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 512)
+    {
         return Err("audit reason cannot exceed 512 characters".to_owned());
     }
     Ok(())

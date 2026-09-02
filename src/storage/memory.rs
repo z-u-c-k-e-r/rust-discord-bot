@@ -40,10 +40,8 @@ impl MemoryStore {
             config,
             updated_at: Utc::now(),
         };
-        self.settings.insert(
-            (guild_id.to_owned(), module_id.to_owned()),
-            value.clone(),
-        );
+        self.settings
+            .insert((guild_id.to_owned(), module_id.to_owned()), value.clone());
         value
     }
 

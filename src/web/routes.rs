@@ -184,12 +184,7 @@ pub async fn update_guild_module(
     let settings = state
         .app
         .storage
-        .set_module_settings(
-            &guild_id,
-            &module_id,
-            payload.enabled,
-            payload.config,
-        )
+        .set_module_settings(&guild_id, &module_id, payload.enabled, payload.config)
         .await
         .map_err(|error| ApiError::internal(error.to_string()))?;
 

@@ -216,13 +216,7 @@ impl LuaEngine {
         let event = event.to_owned();
         let module_id = module_id.to_owned();
         tokio::task::spawn_blocking(move || {
-            execute_handler(
-                &module,
-                limits,
-                "on_event",
-                (&event, &context),
-                &module_id,
-            )
+            execute_handler(&module, limits, "on_event", (&event, &context), &module_id)
         })
         .await?
     }
@@ -309,7 +303,10 @@ fn collect_lua_files(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), LuaEn
         let entry_path = entry.path();
         if entry_path.is_dir() {
             collect_lua_files(&entry_path, output)?;
-        } else if entry_path.extension().is_some_and(|extension| extension == "lua") {
+        } else if entry_path
+            .extension()
+            .is_some_and(|extension| extension == "lua")
+        {
             output.push(entry_path);
         }
     }
@@ -422,13 +419,7 @@ fn sandboxed_lua(limits: LuaLimits) -> mlua::Result<Lua> {
 
     let globals = lua.globals();
     for denied in [
-        "debug",
-        "dofile",
-        "io",
-        "loadfile",
-        "os",
-        "package",
-        "require",
+        "debug", "dofile", "io", "loadfile", "os", "package", "require",
     ] {
         globals.set(denied, Value::Nil)?;
     }
@@ -561,9 +552,9 @@ fn validate_identifier(
 ) -> Result<(), LuaEngineError> {
     let length = value.len();
     let valid = (1..=max_len).contains(&length)
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'));
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        });
 
     if valid {
         Ok(())

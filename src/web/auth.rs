@@ -63,8 +63,8 @@ pub async fn login(State(state): State<WebState>) -> Result<Redirect, ApiError> 
     let csrf_state = Uuid::new_v4().to_string();
     state.oauth_states.insert(csrf_state.clone(), Utc::now());
 
-    let mut url = Url::parse(DISCORD_AUTHORIZE_URL)
-        .map_err(|error| ApiError::internal(error.to_string()))?;
+    let mut url =
+        Url::parse(DISCORD_AUTHORIZE_URL).map_err(|error| ApiError::internal(error.to_string()))?;
     url.query_pairs_mut()
         .append_pair("client_id", &state.app.config.discord_client_id)
         .append_pair("redirect_uri", &state.app.config.discord_oauth_redirect_url)
@@ -81,7 +81,9 @@ pub async fn callback(
     Query(query): Query<OAuthCallback>,
 ) -> Result<Response, ApiError> {
     let Some((_, created_at)) = state.oauth_states.remove(&query.state) else {
-        return Err(ApiError::bad_request("Nieprawidłowy stan logowania OAuth2."));
+        return Err(ApiError::bad_request(
+            "Nieprawidłowy stan logowania OAuth2.",
+        ));
     };
     if Utc::now() - created_at > Duration::minutes(10) {
         return Err(ApiError::bad_request("Próba logowania OAuth2 wygasła."));
@@ -192,10 +194,7 @@ pub async fn logout(
     Ok(response)
 }
 
-pub fn authenticate(
-    state: &WebState,
-    headers: &HeaderMap,
-) -> Result<(String, Session), ApiError> {
+pub fn authenticate(state: &WebState, headers: &HeaderMap) -> Result<(String, Session), ApiError> {
     let session_id = cookie_value(headers, SESSION_COOKIE)
         .ok_or_else(|| ApiError::unauthorized("Zaloguj się przez Discord."))?;
     let session = state

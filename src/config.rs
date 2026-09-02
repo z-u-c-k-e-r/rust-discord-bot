@@ -1,9 +1,4 @@
-use std::{
-    collections::HashSet,
-    env,
-    net::SocketAddr,
-    path::PathBuf,
-};
+use std::{collections::HashSet, env, net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -66,9 +61,7 @@ impl Config {
             discord_client_id,
             discord_client_secret: required("DISCORD_CLIENT_SECRET")?,
             discord_oauth_redirect_url: env::var("DISCORD_OAUTH_REDIRECT_URL")
-                .unwrap_or_else(|_| {
-                    "http://127.0.0.1:8080/auth/discord/callback".to_owned()
-                }),
+                .unwrap_or_else(|_| "http://127.0.0.1:8080/auth/discord/callback".to_owned()),
             discord_dev_guild_id: optional_parse("DISCORD_DEV_GUILD_ID")?,
             dashboard_bind,
             dashboard_public_url: env::var("DASHBOARD_PUBLIC_URL")
@@ -79,10 +72,7 @@ impl Config {
                 .unwrap_or_else(|_| PathBuf::from("scripts")),
             session_cookie_secure: env_bool("SESSION_COOKIE_SECURE", false)?,
             session_ttl_seconds: env_parse("SESSION_TTL_SECONDS", 604_800_i64)?,
-            lua_memory_limit_bytes: env_parse(
-                "LUA_MEMORY_LIMIT_BYTES",
-                8 * 1024 * 1024_usize,
-            )?,
+            lua_memory_limit_bytes: env_parse("LUA_MEMORY_LIMIT_BYTES", 8 * 1024 * 1024_usize)?,
             lua_instruction_limit: env_parse("LUA_INSTRUCTION_LIMIT", 500_000_i64)?,
             lua_hook_granularity: env_parse("LUA_HOOK_GRANULARITY", 1_000_u32)?,
             music_allowed_hosts,

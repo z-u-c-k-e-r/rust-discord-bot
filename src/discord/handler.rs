@@ -1,17 +1,15 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use serde_json::{Map, Value, json};
 use serenity::{
     all::{
-        CommandDataOption, CommandDataOptionValue, CommandInteraction, Interaction, Member, Message,
-        Ready,
+        CommandDataOption, CommandDataOptionValue, CommandInteraction, Interaction, Member,
+        Message, Ready,
     },
     async_trait,
-    builder::{
-        CreateAllowedMentions, CreateInteractionResponse, CreateInteractionResponseMessage,
-    },
+    builder::{CreateAllowedMentions, CreateInteractionResponse, CreateInteractionResponseMessage},
     client::{Context, EventHandler},
 };
-use serde_json::{Map, Value, json};
 
 use crate::{
     AppState,
@@ -203,7 +201,10 @@ async fn handle_command(
         .member
         .as_ref()
         .and_then(|member| member.permissions)
-        .map_or_else(|| "0".to_owned(), |permissions| permissions.bits().to_string());
+        .map_or_else(
+            || "0".to_owned(),
+            |permissions| permissions.bits().to_string(),
+        );
 
     let execution_context = LuaExecutionContext {
         guild_id: command.guild_id.map(|id| id.get().to_string()),
@@ -271,13 +272,7 @@ async fn run_event(
         {
             Ok(actions) => {
                 if let Err(error) = executor::execute_event_actions(
-                    ctx,
-                    state,
-                    &module_id,
-                    guild_id,
-                    channel_id,
-                    actor_id,
-                    &actions,
+                    ctx, state, &module_id, guild_id, channel_id, actor_id, &actions,
                 )
                 .await
                 {

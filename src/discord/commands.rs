@@ -40,14 +40,12 @@ fn build_command(definition: &LuaCommandDefinition) -> Result<CreateCommand> {
         .dm_permission(definition.dm_permission);
 
     if let Some(bits) = &definition.default_member_permissions {
-        let bits = bits
-            .parse::<u64>()
-            .with_context(|| {
-                format!(
-                    "command /{} has invalid default_member_permissions",
-                    definition.name
-                )
-            })?;
+        let bits = bits.parse::<u64>().with_context(|| {
+            format!(
+                "command /{} has invalid default_member_permissions",
+                definition.name
+            )
+        })?;
         command = command.default_member_permissions(Permissions::from_bits_truncate(bits));
     }
 
@@ -102,9 +100,10 @@ fn build_option(definition: &LuaCommandOption) -> Result<CreateCommandOption> {
                     .ok_or_else(|| anyhow!("string choice {} must be a string", choice.name))?,
             ),
             LuaOptionKind::Integer => {
-                let value = choice.value.as_i64().ok_or_else(|| {
-                    anyhow!("integer choice {} must be an integer", choice.name)
-                })?;
+                let value = choice
+                    .value
+                    .as_i64()
+                    .ok_or_else(|| anyhow!("integer choice {} must be an integer", choice.name))?;
                 let value = i32::try_from(value).with_context(|| {
                     format!("integer choice {} is outside Discord's range", choice.name)
                 })?;

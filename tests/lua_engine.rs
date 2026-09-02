@@ -117,5 +117,8 @@ fn duplicate_commands_are_rejected() {
     }
 
     let result = LuaEngine::load(directory.path(), limits());
-    assert!(result.is_err(), "duplicate slash commands must fail startup");
+    assert!(
+        result.is_err(),
+        "duplicate slash commands must fail startup"
+    );
 }
