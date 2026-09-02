@@ -39,8 +39,7 @@ impl EventHandler for Handler {
             guild_id: command.guild_id.map(|guild_id| guild_id.get().to_string()),
             channel_id: command.channel_id.get().to_string(),
             locale: command.locale.clone(),
-            options: serde_json::to_value(&command.data.options)
-                .unwrap_or(serde_json::Value::Null),
+            options: serde_json::to_value(&command.data.options).unwrap_or(serde_json::Value::Null),
         };
 
         let response = {

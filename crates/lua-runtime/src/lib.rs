@@ -84,10 +84,8 @@ impl LuaRuntime {
         lua.set_hook(
             HookTriggers::new().every_nth_instruction(hook_interval),
             move |_, _| {
-                let executed = hook_counter.fetch_add(
-                    u64::from(hook_interval),
-                    Ordering::Relaxed,
-                ) + u64::from(hook_interval);
+                let executed = hook_counter.fetch_add(u64::from(hook_interval), Ordering::Relaxed)
+                    + u64::from(hook_interval);
 
                 if executed > instruction_limit {
                     return Err(mlua::Error::RuntimeError(format!(
@@ -140,7 +138,11 @@ impl LuaRuntime {
         let metadata = parse_metadata(&plugin_table)?;
         validate_plugin_metadata(&metadata)?;
 
-        if self.plugins.iter().any(|plugin| plugin.name == metadata.name) {
+        if self
+            .plugins
+            .iter()
+            .any(|plugin| plugin.name == metadata.name)
+        {
             return Err(LuaRuntimeError::DuplicatePlugin(metadata.name));
         }
 
@@ -178,8 +180,10 @@ impl LuaRuntime {
         }
 
         self.plugins.push(metadata);
-        self.commands.sort_by(|left, right| left.name.cmp(&right.name));
-        self.plugins.sort_by(|left, right| left.name.cmp(&right.name));
+        self.commands
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        self.plugins
+            .sort_by(|left, right| left.name.cmp(&right.name));
         Ok(())
     }
 
@@ -374,7 +378,10 @@ return {
         let mut runtime = LuaRuntime::new(LuaLimits::default()).unwrap();
         runtime.load_plugin_source("sandbox.lua", source).unwrap();
 
-        assert_eq!(runtime.execute("sandbox", &context()).unwrap().content, "safe");
+        assert_eq!(
+            runtime.execute("sandbox", &context()).unwrap().content,
+            "safe"
+        );
     }
 
     #[test]

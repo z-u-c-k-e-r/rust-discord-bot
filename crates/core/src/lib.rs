@@ -64,11 +64,11 @@ impl CommandSpec {
             return Err(ValidationError::InvalidCommandNameLength);
         }
 
-        if !self
-            .name
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || matches!(character, '-' | '_'))
-        {
+        if !self.name.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '_')
+        }) {
             return Err(ValidationError::InvalidCommandNameCharacters);
         }
 

@@ -79,15 +79,14 @@ async fn index() -> Html<&'static str> {
 }
 
 async fn javascript() -> impl IntoResponse {
-    ([
-        ("content-type", "application/javascript; charset=utf-8"),
-    ], APP_JS)
+    (
+        [("content-type", "application/javascript; charset=utf-8")],
+        APP_JS,
+    )
 }
 
 async fn stylesheet() -> impl IntoResponse {
-    ([
-        ("content-type", "text/css; charset=utf-8"),
-    ], STYLES_CSS)
+    ([("content-type", "text/css; charset=utf-8")], STYLES_CSS)
 }
 
 async fn health(

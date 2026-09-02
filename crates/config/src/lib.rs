@@ -34,23 +34,11 @@ impl BotConfig {
             plugin_directory: PathBuf::from(
                 optional("PLUGIN_DIRECTORY").unwrap_or_else(|| "plugins".to_owned()),
             ),
-            lua_memory_limit_bytes: parse_or_default(
-                "LUA_MEMORY_LIMIT_BYTES",
-                16 * 1024 * 1024,
-            )?,
+            lua_memory_limit_bytes: parse_or_default("LUA_MEMORY_LIMIT_BYTES", 16 * 1024 * 1024)?,
             lua_instruction_limit: parse_or_default("LUA_INSTRUCTION_LIMIT", 1_000_000)?,
-            enable_message_content: parse_bool_or_default(
-                "DISCORD_ENABLE_MESSAGE_CONTENT",
-                false,
-            )?,
-            enable_guild_members: parse_bool_or_default(
-                "DISCORD_ENABLE_GUILD_MEMBERS",
-                false,
-            )?,
-            enable_guild_presences: parse_bool_or_default(
-                "DISCORD_ENABLE_GUILD_PRESENCES",
-                false,
-            )?,
+            enable_message_content: parse_bool_or_default("DISCORD_ENABLE_MESSAGE_CONTENT", false)?,
+            enable_guild_members: parse_bool_or_default("DISCORD_ENABLE_GUILD_MEMBERS", false)?,
+            enable_guild_presences: parse_bool_or_default("DISCORD_ENABLE_GUILD_PRESENCES", false)?,
         })
     }
 
