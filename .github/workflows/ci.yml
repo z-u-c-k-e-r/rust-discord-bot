@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Rust, Lua contracts and web shell
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+          components: clippy,rustfmt
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends cmake libopus-dev pkg-config
+
+      - name: Generate dependency lockfile
+        run: cargo generate-lockfile
+
+      - name: Check formatting
+        run: |
+          if ! cargo fmt --all -- --check; then
+            cargo fmt --all
+            git diff -- . ':!Cargo.lock'
+            exit 1
+          fi
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Validate dashboard JavaScript
+        run: node --check apps/api/static/app.js
+
+      - name: Validate Compose model
+        run: docker compose config --quiet
+
+      - name: Smoke-test control API
+        env:
+          API_BIND_ADDRESS: 127.0.0.1:18080
+          RUST_LOG: warn
+        run: |
+          target/debug/zuckerbot-api > /tmp/zuckerbot-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:18080/health | grep --quiet '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat /tmp/zuckerbot-api.log
+          exit 1
+
+      - name: Preserve generated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
