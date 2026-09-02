@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use serenity::{
-    all::{ChannelId, GuildId, UserId},
+    all::{ChannelId, GuildId, Permissions, UserId},
     builder::{CreateAllowedMentions, CreateMessage},
     client::Context,
 };
@@ -21,11 +21,20 @@ pub async fn execute(
     guild_id: Option<GuildId>,
     channel_id: Option<ChannelId>,
     actor_id: Option<UserId>,
+    actor_permissions: Permissions,
+    command_context: bool,
     operation: &ProgressionOperation,
 ) -> Result<Option<String>> {
     if module_id != "progression" {
         return Err(anyhow!(
             "operacje progression są zarezerwowane dla zaufanego modułu progression"
+        ));
+    }
+    if operation.requires_manage_guild()
+        && (!command_context || !has_manage_guild(actor_permissions))
+    {
+        return Err(anyhow!(
+            "korekta progression wymaga komendy użytkownika z uprawnieniem Zarządzanie serwerem"
         ));
     }
 
@@ -347,4 +356,9 @@ const fn storage_metric(metric: LuaProgressionMetric) -> ProgressMetric {
         LuaProgressionMetric::Reputation => ProgressMetric::Reputation,
         LuaProgressionMetric::Messages => ProgressMetric::Messages,
     }
+}
+
+fn has_manage_guild(permissions: Permissions) -> bool {
+    permissions.contains(Permissions::ADMINISTRATOR)
+        || permissions.contains(Permissions::MANAGE_GUILD)
 }
