@@ -14,9 +14,42 @@ concurrency:
 
 jobs:
   quality:
-    name: Rust, Lua contracts and web shell
+    name: Rust, Lua, persistence and web shell
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: postgres://zuckerbot:zuckerbot@127.0.0.1:5432/zuckerbot
+      REDIS_URL: redis://127.0.0.1:6379
+      TEST_DATABASE_URL: postgres://zuckerbot:zuckerbot@127.0.0.1:5432/zuckerbot
+      TEST_REDIS_URL: redis://127.0.0.1:6379
+      API_RUN_MIGRATIONS: "true"
+      CONTROL_PLANE_DEV_TOKEN: ci-control-plane-token-012345678901234567890123456789
+      CONTROL_PLANE_DEV_ACTOR_ID: "123456789012345678"
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: zuckerbot
+          POSTGRES_USER: zuckerbot
+          POSTGRES_PASSWORD: zuckerbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zuckerbot -d zuckerbot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout exact revision
@@ -68,7 +101,7 @@ jobs:
           cp .env.example .env
           docker compose config --quiet
 
-      - name: Smoke-test control API
+      - name: Smoke-test control API and persistence
         env:
           API_BIND_ADDRESS: 127.0.0.1:18080
           RUST_LOG: warn
@@ -76,14 +109,36 @@ jobs:
           target/debug/zuckerbot-api > /tmp/zuckerbot-api.log 2>&1 &
           api_pid=$!
           trap 'kill "$api_pid" 2>/dev/null || true' EXIT
-          for attempt in {1..20}; do
-            if curl --fail --silent http://127.0.0.1:18080/health | grep --quiet '"status":"ok"'; then
-              exit 0
+
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18080/ready | grep --quiet '"status":"ready"'; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat /tmp/zuckerbot-api.log
+              exit 1
             fi
             sleep 0.5
           done
-          cat /tmp/zuckerbot-api.log
-          exit 1
+
+          curl --fail --silent http://127.0.0.1:18080/health | grep --quiet '"status":"ok"'
+
+          status=$(curl --silent --output /tmp/unauthorized.json --write-out '%{http_code}' \
+            http://127.0.0.1:18080/api/v1/guilds/123456789012345678/modules/moderation)
+          test "$status" = "401"
+
+          curl --fail --silent --request PUT \
+            --header "Authorization: Bearer $CONTROL_PLANE_DEV_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data '{"enabled":true,"configuration":{"mode":"observe"}}' \
+            http://127.0.0.1:18080/api/v1/guilds/123456789012345678/modules/moderation \
+            | tee /tmp/module-write.json \
+            | grep --quiet '"version":1'
+
+          curl --fail --silent \
+            --header "Authorization: Bearer $CONTROL_PLANE_DEV_TOKEN" \
+            http://127.0.0.1:18080/api/v1/guilds/123456789012345678/modules/moderation \
+            | grep --quiet '"mode":"observe"'
 
       - name: Preserve generated lockfile
         uses: actions/upload-artifact@v4

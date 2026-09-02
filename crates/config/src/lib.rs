@@ -1,4 +1,9 @@
-use std::{env, net::SocketAddr, path::PathBuf};
+use std::{
+    env, fmt,
+    net::SocketAddr,
+    path::PathBuf,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 
@@ -14,9 +19,40 @@ pub struct BotConfig {
     pub enable_guild_presences: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ApiConfig {
     pub bind_address: SocketAddr,
+    pub database_url: String,
+    pub redis_url: String,
+    pub postgres_max_connections: u32,
+    pub dependency_timeout: Duration,
+    pub migration_timeout: Duration,
+    pub run_migrations: bool,
+    control_plane_dev_token: Option<String>,
+    pub control_plane_dev_actor_id: Option<String>,
+}
+
+impl fmt::Debug for ApiConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ApiConfig")
+            .field("bind_address", &self.bind_address)
+            .field("database_url", &"[redacted]")
+            .field("redis_url", &"[redacted]")
+            .field("postgres_max_connections", &self.postgres_max_connections)
+            .field("dependency_timeout", &self.dependency_timeout)
+            .field("migration_timeout", &self.migration_timeout)
+            .field("run_migrations", &self.run_migrations)
+            .field(
+                "control_plane_dev_token",
+                &self.control_plane_dev_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "control_plane_dev_actor_id",
+                &self.control_plane_dev_actor_id,
+            )
+            .finish()
+    }
 }
 
 impl BotConfig {
@@ -52,9 +88,50 @@ impl ApiConfig {
         dotenvy::dotenv().ok();
 
         let address = optional("API_BIND_ADDRESS").unwrap_or_else(|| "0.0.0.0:8080".to_owned());
+        let control_plane_dev_token = optional("CONTROL_PLANE_DEV_TOKEN");
+        let control_plane_dev_actor_id = optional("CONTROL_PLANE_DEV_ACTOR_ID");
+
+        match (&control_plane_dev_token, &control_plane_dev_actor_id) {
+            (Some(token), Some(actor_id)) => {
+                if token.len() < 32 {
+                    bail!("CONTROL_PLANE_DEV_TOKEN must contain at least 32 characters");
+                }
+                if !is_snowflake(actor_id) {
+                    bail!("CONTROL_PLANE_DEV_ACTOR_ID must be a Discord snowflake");
+                }
+            }
+            (None, None) => {}
+            _ => {
+                bail!(
+                    "CONTROL_PLANE_DEV_TOKEN and CONTROL_PLANE_DEV_ACTOR_ID must be configured together"
+                );
+            }
+        }
+
         Ok(Self {
             bind_address: parse("API_BIND_ADDRESS", &address)?,
+            database_url: optional("DATABASE_URL").unwrap_or_else(|| {
+                "postgres://zuckerbot:zuckerbot@localhost:5432/zuckerbot".to_owned()
+            }),
+            redis_url: optional("REDIS_URL")
+                .unwrap_or_else(|| "redis://localhost:6379".to_owned()),
+            postgres_max_connections: parse_or_default("POSTGRES_MAX_CONNECTIONS", 10)?,
+            dependency_timeout: Duration::from_millis(parse_or_default(
+                "DEPENDENCY_TIMEOUT_MS",
+                2_000_u64,
+            )?),
+            migration_timeout: Duration::from_secs(parse_or_default(
+                "MIGRATION_TIMEOUT_SECONDS",
+                30_u64,
+            )?),
+            run_migrations: parse_bool_or_default("API_RUN_MIGRATIONS", true)?,
+            control_plane_dev_token,
+            control_plane_dev_actor_id,
         })
+    }
+
+    pub fn control_plane_dev_token(&self) -> Option<&str> {
+        self.control_plane_dev_token.as_deref()
     }
 }
 
@@ -102,6 +179,10 @@ fn parse_bool_or_default(name: &str, default: bool) -> Result<bool> {
     }
 }
 
+fn is_snowflake(value: &str) -> bool {
+    (1..=20).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +195,13 @@ mod tests {
         }
 
         unsafe { env::remove_var("ZUCKERBOT_TEST_BOOL") };
+    }
+
+    #[test]
+    fn validates_discord_snowflakes_without_numeric_conversion() {
+        assert!(is_snowflake("123456789012345678"));
+        assert!(!is_snowflake(""));
+        assert!(!is_snowflake("123abc"));
+        assert!(!is_snowflake("123456789012345678901"));
     }
 }
