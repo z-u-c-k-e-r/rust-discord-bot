@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-The repository pins Rust 1.88 through `rust-toolchain.toml`.
+The repository pins Rust 1.98.0 through `rust-toolchain.toml`. CI verifies that this exact version matches Rust's official stable channel before compiling the project.
 
 System packages commonly required on Debian/Ubuntu:
 
@@ -10,6 +10,10 @@ System packages commonly required on Debian/Ubuntu:
 sudo apt-get update
 sudo apt-get install --yes build-essential cmake libopus-dev pkg-config ffmpeg yt-dlp
 ```
+
+The production container does not trust the distribution's potentially older `yt-dlp` package. It downloads the audited upstream release named in `Dockerfile` and verifies its SHA-256 digest before installation.
+
+See [`VERSION_POLICY.md`](VERSION_POLICY.md) before changing Rust, crate, container, database or CI versions.
 
 ## Initial setup
 
@@ -26,12 +30,15 @@ For fast command iteration, set `DISCORD_DEV_GUILD_ID`. Guild commands update im
 Run before every pull request:
 
 ```bash
+bash scripts/check-latest-rust.sh
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
+cargo build --release
+docker build --tag zuckerbot:local .
 ```
 
-CI runs the same gate.
+CI runs the same Rust checks and builds the production container independently.
 
 ## Adding a Lua module
 
@@ -84,6 +91,8 @@ Rules:
 - avoid storing JavaScript-unsafe snowflakes as numeric values
 - include retention or cleanup strategy for high-volume tables
 - separate runtime and migration database roles in production
+
+The supplied Compose stack currently targets PostgreSQL 18.6. PostgreSQL 18 changed the official container's volume layout, so persistent data is mounted at `/var/lib/postgresql`, not the pre-18 `/var/lib/postgresql/data` location.
 
 ## Dashboard frontend
 
