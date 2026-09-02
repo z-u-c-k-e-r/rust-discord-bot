@@ -2,7 +2,7 @@ return {
     manifest = {
         id = "roles",
         name = "Role Management",
-        version = "0.1.0",
+        version = "0.2.0",
         description = "Kontrolowane nadawanie i odbieranie ról z ochroną hierarchii.",
         category = "administration",
         default_enabled = true,
@@ -10,7 +10,8 @@ return {
             {
                 name = "role",
                 description = "Nadaje albo odbiera rolę użytkownikowi.",
-                dm_permission = false,
+                integration_types = { "guild" },
+                contexts = { "guild" },
                 options = {
                     {
                         type = "string",

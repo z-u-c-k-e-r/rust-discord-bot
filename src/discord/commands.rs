@@ -1,20 +1,36 @@
 use anyhow::{Context as _, Result, anyhow};
 use serenity::{
-    all::{Command, CommandOptionType, GuildId, Permissions},
+    all::{
+        Command, CommandOptionType, GuildId, InstallationContext, InteractionContext, Permissions,
+    },
     builder::{CreateCommand, CreateCommandOption},
     client::Context,
 };
 
 use crate::{
     AppState,
-    lua::{LuaCommandDefinition, LuaCommandOption, LuaOptionKind},
+    lua::{
+        LuaCommandDefinition, LuaCommandOption, LuaInstallationContext, LuaInteractionContext,
+        LuaOptionKind,
+    },
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RegistrationScope {
+    Global,
+    Guild,
+}
 
 pub async fn register(ctx: &Context, state: &AppState) -> Result<usize> {
     let definitions = state.scripts.command_definitions().await;
+    let scope = if state.config.discord_dev_guild_id.is_some() {
+        RegistrationScope::Guild
+    } else {
+        RegistrationScope::Global
+    };
     let commands = definitions
         .iter()
-        .map(build_command)
+        .map(|definition| build_command(definition, scope))
         .collect::<Result<Vec<_>>>()?;
     let count = commands.len();
 
@@ -34,10 +50,35 @@ pub async fn register(ctx: &Context, state: &AppState) -> Result<usize> {
     Ok(count)
 }
 
-fn build_command(definition: &LuaCommandDefinition) -> Result<CreateCommand> {
+fn build_command(
+    definition: &LuaCommandDefinition,
+    scope: RegistrationScope,
+) -> Result<CreateCommand> {
+    definition
+        .validate_contexts()
+        .map_err(|message| anyhow!("command /{}: {message}", definition.name))?;
+
     let mut command = CreateCommand::new(&definition.name)
         .description(&definition.description)
-        .dm_permission(definition.dm_permission);
+        .nsfw(definition.nsfw);
+
+    if scope == RegistrationScope::Global {
+        command = command
+            .integration_types(
+                definition
+                    .resolved_integration_types()
+                    .into_iter()
+                    .map(installation_context)
+                    .collect(),
+            )
+            .contexts(
+                definition
+                    .resolved_contexts()
+                    .into_iter()
+                    .map(interaction_context)
+                    .collect(),
+            );
+    }
 
     if let Some(bits) = &definition.default_member_permissions {
         let bits = bits.parse::<u64>().with_context(|| {
@@ -54,6 +95,21 @@ fn build_command(definition: &LuaCommandDefinition) -> Result<CreateCommand> {
     }
 
     Ok(command)
+}
+
+const fn installation_context(context: LuaInstallationContext) -> InstallationContext {
+    match context {
+        LuaInstallationContext::Guild => InstallationContext::Guild,
+        LuaInstallationContext::User => InstallationContext::User,
+    }
+}
+
+const fn interaction_context(context: LuaInteractionContext) -> InteractionContext {
+    match context {
+        LuaInteractionContext::Guild => InteractionContext::Guild,
+        LuaInteractionContext::BotDm => InteractionContext::BotDm,
+        LuaInteractionContext::PrivateChannel => InteractionContext::PrivateChannel,
+    }
 }
 
 fn build_option(definition: &LuaCommandOption) -> Result<CreateCommandOption> {
@@ -155,4 +211,94 @@ fn non_negative_integer(value: f64, name: &str) -> Result<u64> {
         return Err(anyhow!("{name} is too large"));
     }
     Ok(value as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{RegistrationScope, build_command};
+    use crate::lua::LuaCommandDefinition;
+
+    fn definition(value: serde_json::Value) -> LuaCommandDefinition {
+        serde_json::from_value(value).expect("command definition should deserialize")
+    }
+
+    #[test]
+    fn global_command_uses_current_installation_and_interaction_contexts() {
+        let definition = definition(json!({
+            "name": "hello",
+            "description": "Says hello.",
+            "integration_types": ["guild", "user"],
+            "contexts": ["guild", "bot_dm", "private_channel"],
+            "nsfw": true
+        }));
+
+        let payload = serde_json::to_value(
+            build_command(&definition, RegistrationScope::Global)
+                .expect("global command should build"),
+        )
+        .expect("command should serialize");
+
+        assert_eq!(
+            payload["integration_types"]
+                .as_array()
+                .expect("integration_types array")
+                .len(),
+            2
+        );
+        assert_eq!(
+            payload["contexts"]
+                .as_array()
+                .expect("contexts array")
+                .len(),
+            3
+        );
+        assert_eq!(payload["nsfw"], json!(true));
+        assert!(payload.get("dm_permission").is_none());
+    }
+
+    #[test]
+    fn guild_command_omits_global_only_context_fields() {
+        let definition = definition(json!({
+            "name": "hello",
+            "description": "Says hello.",
+            "integration_types": ["guild"],
+            "contexts": ["guild"]
+        }));
+
+        let payload = serde_json::to_value(
+            build_command(&definition, RegistrationScope::Guild)
+                .expect("guild command should build"),
+        )
+        .expect("command should serialize");
+
+        assert!(payload.get("integration_types").is_none());
+        assert!(payload.get("contexts").is_none());
+        assert!(payload.get("dm_permission").is_none());
+    }
+
+    #[test]
+    fn legacy_dm_permission_is_migrated_without_using_the_deprecated_payload_field() {
+        let definition = definition(json!({
+            "name": "hello",
+            "description": "Says hello.",
+            "dm_permission": true
+        }));
+
+        let payload = serde_json::to_value(
+            build_command(&definition, RegistrationScope::Global)
+                .expect("legacy command should build"),
+        )
+        .expect("command should serialize");
+
+        assert_eq!(
+            payload["contexts"]
+                .as_array()
+                .expect("contexts array")
+                .len(),
+            2
+        );
+        assert!(payload.get("dm_permission").is_none());
+    }
 }

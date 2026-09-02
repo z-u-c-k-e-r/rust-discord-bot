@@ -29,7 +29,79 @@ pub struct LuaCommandDefinition {
     #[serde(default)]
     pub default_member_permissions: Option<String>,
     #[serde(default)]
-    pub dm_permission: bool,
+    pub integration_types: Option<Vec<LuaInstallationContext>>,
+    #[serde(default)]
+    pub contexts: Option<Vec<LuaInteractionContext>>,
+    #[serde(default)]
+    pub nsfw: bool,
+    /// Compatibility field for pre-context modules. New modules must use `contexts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dm_permission: Option<bool>,
+}
+
+impl LuaCommandDefinition {
+    pub fn resolved_integration_types(&self) -> Vec<LuaInstallationContext> {
+        self.integration_types
+            .clone()
+            .unwrap_or_else(|| vec![LuaInstallationContext::Guild])
+    }
+
+    pub fn resolved_contexts(&self) -> Vec<LuaInteractionContext> {
+        self.contexts.clone().unwrap_or_else(|| {
+            if self.dm_permission == Some(true) {
+                vec![LuaInteractionContext::Guild, LuaInteractionContext::BotDm]
+            } else {
+                vec![LuaInteractionContext::Guild]
+            }
+        })
+    }
+
+    pub fn validate_contexts(&self) -> Result<(), String> {
+        if self.contexts.is_some() && self.dm_permission.is_some() {
+            return Err(
+                "contexts and the deprecated dm_permission field cannot be used together"
+                    .to_owned(),
+            );
+        }
+
+        let integration_types = self.resolved_integration_types();
+        if integration_types.is_empty() {
+            return Err("integration_types cannot be empty".to_owned());
+        }
+        if has_duplicates(&integration_types) {
+            return Err("integration_types cannot contain duplicates".to_owned());
+        }
+
+        let contexts = self.resolved_contexts();
+        if contexts.is_empty() {
+            return Err("contexts cannot be empty".to_owned());
+        }
+        if has_duplicates(&contexts) {
+            return Err("contexts cannot contain duplicates".to_owned());
+        }
+        if contexts.contains(&LuaInteractionContext::PrivateChannel)
+            && !integration_types.contains(&LuaInstallationContext::User)
+        {
+            return Err("private_channel context requires the user installation type".to_owned());
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LuaInstallationContext {
+    Guild,
+    User,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LuaInteractionContext {
+    Guild,
+    BotDm,
+    PrivateChannel,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -263,6 +335,13 @@ pub enum MusicOperation {
     Queue,
 }
 
+fn has_duplicates<T: PartialEq>(values: &[T]) -> bool {
+    values
+        .iter()
+        .enumerate()
+        .any(|(index, value)| values[index + 1..].contains(value))
+}
+
 fn validate_content(content: &str) -> Result<(), String> {
     let length = content.chars().count();
     if length == 0 || length > 2_000 {
@@ -297,4 +376,75 @@ const fn default_true() -> bool {
 
 fn empty_object() -> Value {
     Value::Object(serde_json::Map::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{LuaCommandDefinition, LuaInstallationContext, LuaInteractionContext};
+
+    fn command(value: serde_json::Value) -> LuaCommandDefinition {
+        serde_json::from_value(value).expect("command definition should deserialize")
+    }
+
+    #[test]
+    fn command_contexts_default_to_guild_only() {
+        let definition = command(json!({
+            "name": "hello",
+            "description": "Says hello."
+        }));
+
+        assert_eq!(
+            definition.resolved_integration_types(),
+            vec![LuaInstallationContext::Guild]
+        );
+        assert_eq!(
+            definition.resolved_contexts(),
+            vec![LuaInteractionContext::Guild]
+        );
+        assert!(definition.validate_contexts().is_ok());
+    }
+
+    #[test]
+    fn legacy_dm_permission_maps_without_serializing_the_deprecated_field() {
+        let definition = command(json!({
+            "name": "hello",
+            "description": "Says hello.",
+            "dm_permission": true
+        }));
+
+        assert_eq!(
+            definition.resolved_contexts(),
+            vec![LuaInteractionContext::Guild, LuaInteractionContext::BotDm]
+        );
+        assert!(definition.validate_contexts().is_ok());
+    }
+
+    #[test]
+    fn private_channel_requires_user_installation() {
+        let definition = command(json!({
+            "name": "hello",
+            "description": "Says hello.",
+            "integration_types": ["guild"],
+            "contexts": ["private_channel"]
+        }));
+
+        assert_eq!(
+            definition.validate_contexts().as_deref(),
+            Err("private_channel context requires the user installation type")
+        );
+    }
+
+    #[test]
+    fn contexts_cannot_be_mixed_with_legacy_dm_permission() {
+        let definition = command(json!({
+            "name": "hello",
+            "description": "Says hello.",
+            "contexts": ["guild"],
+            "dm_permission": false
+        }));
+
+        assert!(definition.validate_contexts().is_err());
+    }
 }

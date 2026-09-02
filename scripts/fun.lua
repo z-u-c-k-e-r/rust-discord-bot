@@ -19,7 +19,7 @@ return {
     manifest = {
         id = "fun",
         name = "Fun and Memes",
-        version = "0.1.0",
+        version = "0.2.0",
         description = "Memy tekstowe, losowanie, wybór i odpowiedzi społecznościowe.",
         category = "engagement",
         default_enabled = true,
@@ -27,12 +27,14 @@ return {
             {
                 name = "meme",
                 description = "Losuje mem tekstowy.",
-                dm_permission = true,
+                integration_types = { "guild", "user" },
+                contexts = { "guild", "bot_dm", "private_channel" },
             },
             {
                 name = "roll",
                 description = "Losuje liczbę od 1 do podanego maksimum.",
-                dm_permission = true,
+                integration_types = { "guild", "user" },
+                contexts = { "guild", "bot_dm", "private_channel" },
                 options = {
                     {
                         type = "integer",
@@ -47,7 +49,8 @@ return {
             {
                 name = "choose",
                 description = "Wybiera jedną pozycję z listy rozdzielonej przecinkami.",
-                dm_permission = true,
+                integration_types = { "guild", "user" },
+                contexts = { "guild", "bot_dm", "private_channel" },
                 options = {
                     {
                         type = "string",
@@ -62,7 +65,8 @@ return {
             {
                 name = "eightball",
                 description = "Odpowiada na pytanie jak magiczna kula.",
-                dm_permission = true,
+                integration_types = { "guild", "user" },
+                contexts = { "guild", "bot_dm", "private_channel" },
                 options = {
                     {
                         type = "string",

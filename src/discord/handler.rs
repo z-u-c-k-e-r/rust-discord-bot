@@ -317,7 +317,7 @@ async fn respond_ephemeral(
     ctx: &Context,
     command: &CommandInteraction,
     content: &str,
-) -> serenity::Result<()> {
+) -> anyhow::Result<()> {
     command
         .create_response(
             &ctx.http,
@@ -328,5 +328,6 @@ async fn respond_ephemeral(
                     .allowed_mentions(CreateAllowedMentions::new()),
             ),
         )
-        .await
+        .await?;
+    Ok(())
 }

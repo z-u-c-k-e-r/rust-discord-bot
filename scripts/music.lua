@@ -2,7 +2,7 @@ return {
     manifest = {
         id = "music",
         name = "Music",
-        version = "0.1.0",
+        version = "0.2.0",
         description = "Odtwarzanie, kolejka i sterowanie głosem przez izolowane akcje Lua.",
         category = "voice",
         default_enabled = true,
@@ -10,7 +10,8 @@ return {
             {
                 name = "music",
                 description = "Steruje odtwarzaniem muzyki na kanale głosowym.",
-                dm_permission = false,
+                integration_types = { "guild" },
+                contexts = { "guild" },
                 options = {
                     {
                         type = "string",

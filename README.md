@@ -4,7 +4,7 @@ A secure, Lua-scriptable Discord automation platform with a high-performance Rus
 
 ZuckerBot is designed as an extensible alternative to closed all-in-one bots. Server behavior lives in versioned Lua modules; Discord connectivity, authorization, storage, rate-sensitive operations and privileged actions remain behind a validated Rust API.
 
-> **Current status:** foundation release. The repository already contains the runtime, dashboard, OAuth2 login, PostgreSQL migrations, Discord command registration, voice queue integration and example Lua modules. The complete product scope is tracked in [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md), while [`docs/VERSION_POLICY.md`](docs/VERSION_POLICY.md) defines the latest-stable dependency policy.
+> **Current status:** foundation release. The repository already contains the runtime, dashboard, OAuth2 login, PostgreSQL migrations, Discord command registration, voice queue integration and example Lua modules. The complete product scope is tracked in [`docs/FEATURE_MATRIX.md`](docs/FEATURE_MATRIX.md), while the audited Discord API surface is recorded in [`docs/DISCORD_PLATFORM_COVERAGE.md`](docs/DISCORD_PLATFORM_COVERAGE.md). [`docs/VERSION_POLICY.md`](docs/VERSION_POLICY.md) defines the latest-stable dependency policy.
 
 ## Why Rust plus Lua?
 
@@ -20,6 +20,7 @@ Rust owns the trust boundary:
 Lua owns server behavior:
 
 - slash-command manifests
+- command installation and interaction contexts
 - command options and choices
 - reactions to Discord events
 - per-guild configuration schemas
@@ -30,8 +31,10 @@ A Lua script never receives the Discord bot token, raw database credentials, unr
 ## Included foundation
 
 - Discord slash commands generated from Lua manifests
+- current global-command `integration_types`, `contexts` and NSFW declarations
+- controlled migration from the deprecated `dm_permission` manifest field
 - event dispatch for `message_create` and `guild_member_add`
-- sandboxed Lua 5.4 with memory and instruction limits
+- sandboxed Lua 5.4 with memory and global instruction limits
 - validated action API for replies, messages, moderation, roles, purge, music and audit events
 - action-level Discord permission checks
 - bot, moderator and target role-hierarchy checks
@@ -117,7 +120,7 @@ DISCORD_OAUTH_REDIRECT_URL=http://127.0.0.1:8080/auth/discord/callback
 DISCORD_DEV_GUILD_ID=...
 ```
 
-Using `DISCORD_DEV_GUILD_ID` registers commands on one development server, where updates appear immediately. Remove it before production to register global commands.
+Using `DISCORD_DEV_GUILD_ID` registers commands on one development server, where updates appear immediately. Remove it before production to register global commands with their declared installation and interaction contexts.
 
 ### Run with Docker Compose
 
@@ -150,7 +153,9 @@ return {
             {
                 name = "hello",
                 description = "Greets the invoking user.",
-                dm_permission = true,
+                integration_types = { "guild", "user" },
+                contexts = { "guild", "bot_dm", "private_channel" },
+                nsfw = false,
             },
         },
         config_schema = {

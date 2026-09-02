@@ -524,14 +524,14 @@ async fn ensure_role_hierarchy(
         ));
     }
 
-    if let Some(actor_id) = actor_id {
-        if actor_id != guild.owner_id {
-            let actor = guild_id.member(&ctx.http, actor_id).await?;
-            if !rank_is_higher(member_rank(&actor, &guild.roles), target_rank) {
-                return Err(anyhow!(
-                    "twoja najwyższa rola musi znajdować się nad zarządzaną rolą"
-                ));
-            }
+    if let Some(actor_id) = actor_id
+        && actor_id != guild.owner_id
+    {
+        let actor = guild_id.member(&ctx.http, actor_id).await?;
+        if !rank_is_higher(member_rank(&actor, &guild.roles), target_rank) {
+            return Err(anyhow!(
+                "twoja najwyższa rola musi znajdować się nad zarządzaną rolą"
+            ));
         }
     }
 
