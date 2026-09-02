@@ -109,7 +109,7 @@ async fn report_routes_only_to_the_configured_staff_channel() {
             content: _,
         } if channel_id == "100000000000000006"
     ));
-    assert!(matches!(actions[2], LuaAction::Audit { .. }));
+    assert!(matches!(actions.get(2), Some(LuaAction::Audit { .. })));
 }
 
 #[tokio::test]
