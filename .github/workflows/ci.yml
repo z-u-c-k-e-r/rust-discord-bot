@@ -15,18 +15,18 @@ concurrency:
 
 jobs:
   rust:
-    name: Format, lint and test
+    name: Format, lint, test and build
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust
+      - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.98.0
           components: rustfmt, clippy
 
       - name: Cache Rust build
@@ -41,11 +41,32 @@ jobs:
             libopus-dev \
             pkg-config
 
+      - name: Verify the project tracks the latest stable Rust release
+        run: bash scripts/check-latest-rust.sh
+
+      - name: Resolve the pinned dependency graph
+        run: cargo generate-lockfile
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo test --locked --all-features
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+  container:
+    name: Build production container
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build --tag zuckerbot:ci .

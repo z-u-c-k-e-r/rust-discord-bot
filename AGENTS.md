@@ -19,6 +19,14 @@ Guild behavior should be scriptable in Lua. Rust is the privileged host and must
 9. Keep music URL input behind an HTTPS host allowlist.
 10. Do not claim a feature is complete until it is connected end to end.
 
+## Version policy
+
+1. Read `docs/VERSION_POLICY.md` before adding or updating dependencies.
+2. Verify current stable upstream releases on their official sources; do not copy versions from memory.
+3. Keep `rust-toolchain.toml`, `Cargo.toml`, `Dockerfile`, `compose.yaml` and CI synchronized.
+4. Use stable production releases only. Previews, release candidates and nightlies require a separate experimental branch.
+5. Never downgrade a component merely to hide a migration error. Document and implement the migration.
+
 ## Before changing code
 
 Read:
@@ -28,13 +36,17 @@ Read:
 - `docs/LUA_API.md`
 - `docs/SECURITY.md`
 - `docs/FEATURE_MATRIX.md`
+- `docs/VERSION_POLICY.md`
 
 ## Required checks
 
 ```bash
+bash scripts/check-latest-rust.sh
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
+cargo build --release
+docker build --tag zuckerbot:local .
 ```
 
 ## Pull-request explanation
