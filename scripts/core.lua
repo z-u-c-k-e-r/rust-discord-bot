@@ -2,7 +2,7 @@ return {
     manifest = {
         id = "core",
         name = "Core",
-        version = "0.1.0",
+        version = "0.2.0",
         description = "Podstawowe komendy diagnostyczne i informacje o platformie.",
         category = "platform",
         default_enabled = true,
@@ -10,12 +10,14 @@ return {
             {
                 name = "ping",
                 description = "Sprawdza, czy bot i silnik Lua odpowiadają.",
-                dm_permission = true,
+                integration_types = { "guild", "user" },
+                contexts = { "guild", "bot_dm", "private_channel" },
             },
             {
                 name = "about",
                 description = "Pokazuje informacje o ZuckerBocie.",
-                dm_permission = true,
+                integration_types = { "guild", "user" },
+                contexts = { "guild", "bot_dm", "private_channel" },
             },
         },
         config_schema = {

@@ -12,7 +12,7 @@ return {
     manifest = {
         id = "moderation",
         name = "Moderation",
-        version = "0.1.0",
+        version = "0.2.0",
         description = "Bezpieczne akcje moderacyjne z kontrolą uprawnień, hierarchii i audytem.",
         category = "safety",
         default_enabled = true,
@@ -20,7 +20,8 @@ return {
             {
                 name = "moderate",
                 description = "Wykonuje timeout, kick, ban albo czyszczenie wiadomości.",
-                dm_permission = false,
+                integration_types = { "guild" },
+                contexts = { "guild" },
                 options = {
                     {
                         type = "string",
