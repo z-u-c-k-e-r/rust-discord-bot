@@ -89,6 +89,52 @@ async fn infinite_loop_hits_instruction_limit() {
     );
 }
 
+#[tokio::test]
+async fn dangerous_lua_globals_are_unavailable() {
+    let directory = TempDir::new().expect("temporary directory");
+    std::fs::write(
+        directory.path().join("sandbox.lua"),
+        r#"
+        return {
+            manifest = {
+                id = "sandbox",
+                name = "Sandbox",
+                version = "1.0.0",
+                description = "Sandbox global-denylist test module.",
+                category = "test",
+                commands = {
+                    { name = "sandbox", description = "Checks denied Lua globals." }
+                }
+            },
+            on_command = function()
+                assert(collectgarbage == nil)
+                assert(coroutine == nil)
+                assert(debug == nil)
+                assert(dofile == nil)
+                assert(io == nil)
+                assert(load == nil)
+                assert(loadfile == nil)
+                assert(os == nil)
+                assert(package == nil)
+                assert(pcall == nil)
+                assert(require == nil)
+                assert(xpcall == nil)
+                return {}
+            end
+        }
+        "#,
+    )
+    .expect("write sandbox test module");
+
+    let engine = LuaEngine::load(directory.path(), limits()).expect("module should load");
+    let actions = engine
+        .execute_command("sandbox", "sandbox", context())
+        .await
+        .expect("sandbox globals should remain unavailable");
+
+    assert!(actions.is_empty());
+}
+
 #[test]
 fn duplicate_commands_are_rejected() {
     let directory = TempDir::new().expect("temporary directory");

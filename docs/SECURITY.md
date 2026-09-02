@@ -28,8 +28,11 @@ Current controls:
 - fresh VM for every invocation
 - vendored Lua 5.4
 - memory ceiling
-- instruction-count hook
+- global instruction-count hook covering the main thread and every new Lua thread
 - disabled filesystem, operating-system, module-loader and debug libraries
+- disabled dynamic loading (`load`, `loadfile`, `dofile`)
+- disabled coroutines and direct garbage-collector controls
+- disabled `pcall` and `xpcall`, preventing scripts from swallowing the instruction-limit error
 - no native network API
 - no direct database API
 - no Discord client objects
@@ -39,6 +42,8 @@ Current controls:
 - validation before action execution
 
 These controls reduce risk from accidental loops, large allocations and direct capability abuse. They do not make arbitrary third-party Lua automatically trustworthy. Module review remains required.
+
+Because error-catching primitives are intentionally unavailable, module code should validate inputs and return safe fallback actions instead of using exception-driven control flow. Recoverable host operations are executed only after the Lua handler returns and are reported by the Rust action executor.
 
 Future hardening candidates:
 

@@ -419,7 +419,18 @@ fn sandboxed_lua(limits: LuaLimits) -> mlua::Result<Lua> {
 
     let globals = lua.globals();
     for denied in [
-        "debug", "dofile", "io", "loadfile", "os", "package", "require",
+        "collectgarbage",
+        "coroutine",
+        "debug",
+        "dofile",
+        "io",
+        "load",
+        "loadfile",
+        "os",
+        "package",
+        "pcall",
+        "require",
+        "xpcall",
     ] {
         globals.set(denied, Value::Nil)?;
     }
@@ -451,7 +462,7 @@ fn sandboxed_lua(limits: LuaLimits) -> mlua::Result<Lua> {
 
     let remaining = AtomicI64::new(limits.instruction_limit);
     let decrement = i64::from(limits.hook_granularity);
-    lua.set_hook(
+    lua.set_global_hook(
         HookTriggers::new().every_nth_instruction(limits.hook_granularity),
         move |_, _| {
             if remaining.fetch_sub(decrement, Ordering::Relaxed) <= decrement {
