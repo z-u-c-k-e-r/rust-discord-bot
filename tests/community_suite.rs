@@ -4,9 +4,7 @@ use std::{
 };
 
 use serde_json::json;
-use zuckerbot::lua::{
-    LuaAction, LuaEngine, LuaEventContext, LuaExecutionContext, LuaLimits,
-};
+use zuckerbot::lua::{LuaAction, LuaEngine, LuaEventContext, LuaExecutionContext, LuaLimits};
 
 fn limits() -> LuaLimits {
     LuaLimits {
@@ -42,7 +40,10 @@ async fn bundled_suite_registers_expected_modules_and_commands() {
     let commands = engine.command_definitions().await;
 
     assert!(manifests.len() >= 13, "expected the expanded module suite");
-    assert!(commands.len() >= 43, "expected the expanded command catalog");
+    assert!(
+        commands.len() >= 43,
+        "expected the expanded command catalog"
+    );
 
     for (command, module_id) in [
         ("calculate", "utility"),
@@ -164,7 +165,10 @@ async fn automod_detects_case_insensitive_blocked_phrases() {
         .await
         .expect("automod event should execute");
 
-    assert!(matches!(actions.first(), Some(LuaAction::DeleteMessage { .. })));
+    assert!(matches!(
+        actions.first(),
+        Some(LuaAction::DeleteMessage { .. })
+    ));
     assert!(matches!(actions.last(), Some(LuaAction::Audit { .. })));
 }
 
