@@ -43,7 +43,9 @@ Optional fields:
 {
     name = "example",
     description = "Runs an example command.",
-    dm_permission = false,
+    integration_types = { "guild" },
+    contexts = { "guild" },
+    nsfw = false,
     default_member_permissions = "32",
     options = {
         {
@@ -63,6 +65,25 @@ Optional fields:
 }
 ```
 
+### Installation and interaction contexts
+
+Current Discord commands use two separate declarations:
+
+- `integration_types` controls how the app was installed. Values: `guild`, `user`.
+- `contexts` controls where the command may run. Values: `guild`, `bot_dm`, `private_channel`.
+
+Both default to `{ "guild" }` in ZuckerBot. A `private_channel` context requires the `user` installation type. Empty arrays and duplicate values are rejected. These fields apply only to global command registration; the development-guild registration path omits them because Discord does not accept global-only context fields on guild commands.
+
+The historic `dm_permission` field is deprecated by Discord. API version 1 accepts it only as a migration input:
+
+- `dm_permission = false` maps to `{ "guild" }`;
+- `dm_permission = true` maps to `{ "guild", "bot_dm" }`;
+- it cannot be combined with `contexts`;
+- ZuckerBot never sends `dm_permission` back to Discord;
+- it is scheduled for removal in Lua API version 2.
+
+Set `nsfw = true` only for commands that are intentionally age-restricted.
+
 Supported option types:
 
 - `string`
@@ -77,7 +98,7 @@ Supported option types:
 - `subcommand`
 - `subcommand_group`
 
-Subcommands and subcommand groups contain nested `options`. Discord limits each level to 25 entries. The runtime rejects duplicate command names and refuses to start if the total number of global commands exceeds 100.
+Subcommands and subcommand groups contain nested `options`. Discord limits each level to 25 entries. The runtime rejects duplicate command names and refuses command registration if the total number of global commands exceeds 100.
 
 `default_member_permissions` is a Discord permission bitset encoded as a string. Privileged actions are checked again at execution time; command visibility is not treated as authorization.
 
@@ -102,7 +123,7 @@ ctx = {
 }
 ```
 
-All Discord snowflakes should be treated as strings. Nested subcommand options are represented as nested tables.
+All Discord snowflakes are strings at Lua and JSON boundaries. Nested subcommand options are represented as nested tables.
 
 ## Event context
 
@@ -121,26 +142,11 @@ Implemented events:
 
 ### `message_create`
 
-`data` contains:
-
-- `message_id`
-- `content`
-- `author.id`
-- `author.name`
-- `author.global_name`
-- `mentions`
-- `attachments`
+`data` contains `message_id`, `content`, author data, mentions and attachment metadata.
 
 ### `guild_member_add`
 
-`data` contains:
-
-- `user.id`
-- `user.name`
-- `user.global_name`
-- `user.bot`
-- `roles`
-- `joined_at`
+`data` contains user data, roles and `joined_at`.
 
 The stable event envelope lets future versions add events without exposing Serenity internals directly to Lua.
 
@@ -257,15 +263,7 @@ Required permission: Manage Roles. The target role must be below the bot and inv
 }
 ```
 
-Operations:
-
-- `play`
-- `pause`
-- `resume`
-- `skip`
-- `stop`
-- `queue`
-- `leave`
+Operations: `play`, `pause`, `resume`, `skip`, `stop`, `queue`, `leave`.
 
 A URL must use HTTPS and match `MUSIC_ALLOWED_HOSTS`. Plain text is treated as a search query. Music actions require a guild and user voice context.
 
@@ -294,27 +292,32 @@ zuckerbot.truncate(text, max_characters)
 zuckerbot.unix_time()
 ```
 
-`escape_mentions` inserts a zero-width separator after `@`. It should be used whenever untrusted display names or user-provided strings are included in output.
+`escape_mentions` inserts a zero-width separator after `@`. Use it whenever untrusted display names or user-provided strings are included in output.
 
 ## Sandbox
 
 Unavailable globals:
 
+- `collectgarbage`
+- `coroutine`
 - `debug`
 - `dofile`
 - `io`
+- `load`
 - `loadfile`
 - `os`
 - `package`
+- `pcall`
 - `require`
+- `xpcall`
 
 Each execution uses:
 
-- a fresh Lua state
-- a configurable memory limit
-- a configurable instruction limit
-- a maximum of 25 returned actions
-- post-deserialization action validation
+- a fresh Lua state;
+- a configurable memory limit;
+- a global instruction hook covering new Lua threads;
+- a maximum of 25 returned actions;
+- post-deserialization action validation.
 
 Configuration environment variables:
 
@@ -324,17 +327,18 @@ LUA_INSTRUCTION_LIMIT=500000
 LUA_HOOK_GRANULARITY=1000
 ```
 
-The sandbox intentionally has no direct network, database, process or filesystem API. New capabilities must be modeled as narrow declarative actions and reviewed at the Rust boundary.
+The sandbox intentionally has no direct network, database, process, Discord-client or filesystem API. New capabilities must be modeled as narrow declarative actions and reviewed at the Rust boundary.
 
 ## Module development checklist
 
 1. Choose a globally unique module ID and command names.
 2. Keep the manifest free of side effects.
-3. Treat every context field as untrusted input.
-4. Escape user-controlled text before returning it.
-5. Return a user-visible reply for commands.
-6. Use the smallest privileged action possible.
-7. Add configuration schema metadata.
-8. Add runtime tests for failure paths.
-9. Document Discord permissions and intents.
-10. Review the module before enabling it on production guilds.
+3. Use `integration_types` and `contexts`, not `dm_permission`.
+4. Treat every context field as untrusted input.
+5. Escape user-controlled text before returning it.
+6. Return a user-visible reply for commands.
+7. Use the smallest privileged action possible.
+8. Add configuration schema metadata.
+9. Add runtime tests for success and failure paths.
+10. Document Discord permissions and intents.
+11. Review the module before enabling it on production guilds.
