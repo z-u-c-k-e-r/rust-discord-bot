@@ -9,7 +9,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zuckerbot -d zuckerbot"]
       interval: 5s
@@ -37,6 +36,9 @@ services:
     env_file: .env
     environment:
       API_BIND_ADDRESS: 0.0.0.0:8080
+      DATABASE_URL: postgres://zuckerbot:zuckerbot@postgres:5432/zuckerbot
+      REDIS_URL: redis://redis:6379
+      API_RUN_MIGRATIONS: "true"
     ports:
       - "8080:8080"
     depends_on:
