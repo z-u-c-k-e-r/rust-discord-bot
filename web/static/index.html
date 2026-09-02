@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ZuckerBot Control</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="ZuckerBot Control">
+        <span class="brand-mark">Z</span>
+        <span>
+          <strong>ZuckerBot</strong>
+          <small>Control platform</small>
+        </span>
+      </a>
+
+      <nav class="nav" aria-label="Nawigacja">
+        <a class="nav-item active" href="#modules">Moduły</a>
+        <span class="nav-item disabled">Automatyzacje</span>
+        <span class="nav-item disabled">Moderacja</span>
+        <span class="nav-item disabled">Muzyka</span>
+        <span class="nav-item disabled">Analityka</span>
+        <span class="nav-item disabled">Dziennik audytu</span>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="runtime">
+          <span class="runtime-dot"></span>
+          <span>Rust core + Lua modules</span>
+        </div>
+        <button id="logout-button" class="text-button hidden" type="button">Wyloguj</button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Panel administracyjny</p>
+          <h1>Konfiguracja serwera</h1>
+        </div>
+        <div id="account" class="account hidden">
+          <div>
+            <strong id="account-name"></strong>
+            <small id="account-id"></small>
+          </div>
+        </div>
+      </header>
+
+      <section id="login-view" class="login-panel">
+        <div class="login-copy">
+          <p class="eyebrow">Bezpieczny dostęp</p>
+          <h2>Zarządzaj ZuckerBotem przez Discord</h2>
+          <p>Panel pokaże wyłącznie serwery, których jesteś właścicielem albo na których masz uprawnienie Zarządzanie serwerem.</p>
+          <a class="primary-button" href="/auth/discord">Zaloguj przez Discord</a>
+        </div>
+        <div class="login-proof">
+          <div>
+            <span>OAuth2</span>
+            <strong>Token bota nigdy nie trafia do przeglądarki</strong>
+          </div>
+          <div>
+            <span>Lua sandbox</span>
+            <strong>Skrypty wykonują tylko dozwolone akcje</strong>
+          </div>
+          <div>
+            <span>Audit trail</span>
+            <strong>Zmiany konfiguracji są rejestrowane</strong>
+          </div>
+        </div>
+      </section>
+
+      <section id="dashboard-view" class="hidden">
+        <div class="toolbar">
+          <label class="field">
+            <span>Serwer</span>
+            <select id="guild-select"></select>
+          </label>
+          <div class="toolbar-meta">
+            <span id="module-count">0 modułów</span>
+            <span id="save-status" role="status" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <section id="modules" class="module-grid" aria-live="polite"></section>
+      </section>
+    </main>
+  </div>
+
+  <template id="module-template">
+    <article class="module-card">
+      <div class="module-heading">
+        <div>
+          <span class="module-category"></span>
+          <h2 class="module-name"></h2>
+          <p class="module-description"></p>
+        </div>
+        <label class="switch">
+          <input class="module-enabled" type="checkbox">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="sr-only">Włącz moduł</span>
+        </label>
+      </div>
+      <div class="module-meta">
+        <span class="module-id"></span>
+        <span class="module-version"></span>
+      </div>
+      <details>
+        <summary>Konfiguracja JSON</summary>
+        <label class="json-label">
+          <span class="sr-only">Konfiguracja modułu</span>
+          <textarea class="module-config" spellcheck="false"></textarea>
+        </label>
+      </details>
+      <div class="module-footer">
+        <span class="module-state"></span>
+        <button class="save-button" type="button">Zapisz zmiany</button>
+      </div>
+    </article>
+  </template>
+</body>
+</html>
