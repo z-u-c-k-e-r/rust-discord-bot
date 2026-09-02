@@ -431,8 +431,8 @@ mod tests {
         }));
 
         assert_eq!(
-            definition.validate_contexts().as_deref(),
-            Err("private_channel context requires the user installation type")
+            definition.validate_contexts(),
+            Err("private_channel context requires the user installation type".to_owned())
         );
     }
 
