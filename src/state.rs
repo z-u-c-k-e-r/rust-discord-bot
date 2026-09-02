@@ -14,6 +14,7 @@ pub struct AppState {
     pub scripts: LuaEngine,
     pub storage: Storage,
     pub http_client: reqwest::Client,
+    pub media_http_client: reqwest_songbird::Client,
 }
 
 impl AppState {
@@ -26,8 +27,10 @@ impl AppState {
         };
         let scripts = LuaEngine::load(&config.scripts_dir, limits)?;
         let storage = Storage::connect(config.database_url.as_deref()).await?;
-        let http_client = reqwest::Client::builder()
-            .user_agent(concat!("ZuckerBot/", env!("CARGO_PKG_VERSION")))
+        let user_agent = concat!("ZuckerBot/", env!("CARGO_PKG_VERSION"));
+        let http_client = reqwest::Client::builder().user_agent(user_agent).build()?;
+        let media_http_client = reqwest_songbird::Client::builder()
+            .user_agent(user_agent)
             .build()?;
 
         Ok(Self {
@@ -35,6 +38,7 @@ impl AppState {
             scripts,
             storage,
             http_client,
+            media_http_client,
         })
     }
 }

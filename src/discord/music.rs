@@ -50,9 +50,9 @@ pub async fn execute(
             validate_source(state, query)?;
 
             let source = if query.starts_with("https://") {
-                YoutubeDl::new(state.http_client.clone(), query.to_owned())
+                YoutubeDl::new(state.media_http_client.clone(), query.to_owned())
             } else {
-                YoutubeDl::new_search(state.http_client.clone(), query.to_owned())
+                YoutubeDl::new_search(state.media_http_client.clone(), query.to_owned())
             };
             handler.enqueue_input(source.into()).await;
             Ok(format!(
