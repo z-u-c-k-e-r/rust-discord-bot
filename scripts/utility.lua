@@ -113,9 +113,8 @@ return {
                     {
                         type = "integer",
                         name = "offset",
-                        description = "Przesunięcie od teraz w sekundach.",
+                        description = "Przesunięcie od teraz w sekundach; dopuszczalne są wartości ujemne.",
                         required = false,
-                        min_value = -31536000,
                         max_value = 31536000,
                     },
                     {
@@ -140,8 +139,8 @@ return {
                 description = "Losuje liczbę całkowitą z wybranego zakresu.",
                 dm_permission = true,
                 options = {
-                    { type = "integer", name = "minimum", description = "Dolna granica.", required = true, min_value = -1000000000, max_value = 1000000000 },
-                    { type = "integer", name = "maximum", description = "Górna granica.", required = true, min_value = -1000000000, max_value = 1000000000 },
+                    { type = "integer", name = "minimum", description = "Dolna granica; może być ujemna.", required = true, max_value = 1000000000 },
+                    { type = "integer", name = "maximum", description = "Górna granica; może być ujemna.", required = true, max_value = 1000000000 },
                 },
             },
             {
@@ -242,7 +241,9 @@ return {
         end
 
         if command == "timestamp" then
-            local value = zuckerbot.unix_time() + (tonumber(ctx.options.offset) or 0)
+            local offset = math.tointeger(ctx.options.offset or 0) or 0
+            if offset < -31536000 then return reply("Minimalne przesunięcie to minus 365 dni.") end
+            local value = zuckerbot.unix_time() + offset
             local style = ctx.options.style or "F"
             local markup = string.format("<t:%d:%s>", value, style)
             return reply("Podgląd: " .. markup .. "\nKod: `" .. markup .. "`", false)
@@ -251,6 +252,10 @@ return {
         if command == "randomnumber" then
             local minimum = math.tointeger(ctx.options.minimum)
             local maximum = math.tointeger(ctx.options.maximum)
+            if not minimum or not maximum then return reply("Zakres musi zawierać liczby całkowite.") end
+            if minimum < -1000000000 or maximum < -1000000000 then
+                return reply("Najmniejsza dozwolona wartość to `-1000000000`.")
+            end
             if minimum > maximum then minimum, maximum = maximum, minimum end
             seed(ctx)
             return reply(string.format("Wylosowano **%d** z zakresu `%d–%d`.", math.random(minimum, maximum), minimum, maximum), false)
