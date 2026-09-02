@@ -121,8 +121,7 @@ impl PostgresStore {
         profile.messages = profile.messages.saturating_add(1);
 
         let eligible = profile.last_xp_at.as_ref().is_none_or(|last_award| {
-            now.signed_duration_since(*last_award)
-                >= Duration::seconds(i64::from(cooldown_seconds))
+            now.signed_duration_since(*last_award) >= Duration::seconds(i64::from(cooldown_seconds))
         });
         let awarded = if eligible { amount.max(0) } else { 0 };
         if awarded > 0 {
@@ -284,8 +283,7 @@ impl PostgresStore {
         let now = Utc::now();
 
         if let Some(last_given_at) = last_given_at {
-            let next_available_at =
-                last_given_at + Duration::seconds(i64::from(cooldown_seconds));
+            let next_available_at = last_given_at + Duration::seconds(i64::from(cooldown_seconds));
             if now < next_available_at {
                 transaction.commit().await?;
                 return Ok(ReputationGrantOutcome::Cooldown { next_available_at });
@@ -332,10 +330,7 @@ impl PostgresStore {
         let mut profile = lock_profile(&mut transaction, guild_id, user_id).await?;
         profile.xp = profile.xp.saturating_add(xp_delta).max(0);
         profile.coins = profile.coins.saturating_add(coins_delta).max(0);
-        profile.reputation = profile
-            .reputation
-            .saturating_add(reputation_delta)
-            .max(0);
+        profile.reputation = profile.reputation.saturating_add(reputation_delta).max(0);
         profile.level = level_for_xp(profile.xp);
         profile.updated_at = Utc::now();
         write_profile(&mut transaction, &profile).await?;

@@ -77,9 +77,7 @@ pub async fn execute(
                     )
                     .await?;
 
-                if *announce_level_up
-                    && let Some(channel_id) = channel_id
-                {
+                if *announce_level_up && let Some(channel_id) = channel_id {
                     let template = level_up_message.as_deref().unwrap_or(
                         "🎉 {user} awansuje na poziom **{level}**! Łączne XP: **{xp}**.",
                     );
@@ -296,9 +294,9 @@ pub async fn execute(
                     "Reputację możesz przyznać ponownie <t:{}:R>.",
                     next_available_at.timestamp(),
                 ))),
-                ReputationGrantOutcome::SameAccount => {
-                    Ok(Some("Nie możesz przyznać reputacji samemu sobie.".to_owned()))
-                }
+                ReputationGrantOutcome::SameAccount => Ok(Some(
+                    "Nie możesz przyznać reputacji samemu sobie.".to_owned(),
+                )),
             }
         }
         ProgressionOperation::Adjust {

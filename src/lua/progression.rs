@@ -68,7 +68,9 @@ impl ProgressionOperation {
                     return Err("message XP must be between 1 and 1000".to_owned());
                 }
                 if !(1..=86_400).contains(cooldown_seconds) {
-                    return Err("message XP cooldown must be between 1 and 86400 seconds".to_owned());
+                    return Err(
+                        "message XP cooldown must be between 1 and 86400 seconds".to_owned()
+                    );
                 }
                 if level_up_message
                     .as_ref()
@@ -123,7 +125,9 @@ impl ProgressionOperation {
                     return Err("reputation amount must be between 1 and 100".to_owned());
                 }
                 if !(60..=604_800).contains(cooldown_seconds) {
-                    return Err("reputation cooldown must be between 60 and 604800 seconds".to_owned());
+                    return Err(
+                        "reputation cooldown must be between 60 and 604800 seconds".to_owned()
+                    );
                 }
                 Ok(())
             }
@@ -144,14 +148,18 @@ impl ProgressionOperation {
                     ("reputation_delta", *reputation_delta),
                 ] {
                     if value.unsigned_abs() > 1_000_000_000 {
-                        return Err(format!("{name} cannot exceed 1000000000 in either direction"));
+                        return Err(format!(
+                            "{name} cannot exceed 1000000000 in either direction"
+                        ));
                     }
                 }
                 if reason
                     .as_ref()
                     .is_some_and(|value| value.chars().count() > 512)
                 {
-                    return Err("progress adjustment reason cannot exceed 512 characters".to_owned());
+                    return Err(
+                        "progress adjustment reason cannot exceed 512 characters".to_owned()
+                    );
                 }
                 Ok(())
             }

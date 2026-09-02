@@ -3,12 +3,10 @@ use std::path::PathBuf;
 use serde_json::json;
 use zuckerbot::{
     lua::{
-        LuaAction, LuaEngine, LuaEventContext, LuaExecutionContext, LuaLimits,
-        ProgressionOperation,
+        LuaAction, LuaEngine, LuaEventContext, LuaExecutionContext, LuaLimits, ProgressionOperation,
     },
     storage::{
-        CoinTransferOutcome, DailyClaimOutcome, MemoryStore, ProgressMetric,
-        ReputationGrantOutcome,
+        CoinTransferOutcome, DailyClaimOutcome, MemoryStore, ProgressMetric, ReputationGrantOutcome,
     },
 };
 
@@ -76,10 +74,7 @@ fn memory_store_transfers_coins_atomically() {
         CoinTransferOutcome::InsufficientFunds { balance: 300 }
     ));
     assert_eq!(store.get_member_progress("guild", "sender").coins, 300);
-    assert_eq!(
-        store.get_member_progress("guild", "recipient").coins,
-        200
-    );
+    assert_eq!(store.get_member_progress("guild", "recipient").coins, 200);
 }
 
 #[test]

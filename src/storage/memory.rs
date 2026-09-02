@@ -96,8 +96,7 @@ impl MemoryStore {
         profile.messages = profile.messages.saturating_add(1);
 
         let eligible = profile.last_xp_at.as_ref().is_none_or(|last_award| {
-            now.signed_duration_since(*last_award)
-                >= Duration::seconds(i64::from(cooldown_seconds))
+            now.signed_duration_since(*last_award) >= Duration::seconds(i64::from(cooldown_seconds))
         });
         let awarded = if eligible { amount.max(0) } else { 0 };
 
@@ -249,10 +248,7 @@ impl MemoryStore {
         let mut profile = self.profile(guild_id, user_id, now);
         profile.xp = profile.xp.saturating_add(xp_delta).max(0);
         profile.coins = profile.coins.saturating_add(coins_delta).max(0);
-        profile.reputation = profile
-            .reputation
-            .saturating_add(reputation_delta)
-            .max(0);
+        profile.reputation = profile.reputation.saturating_add(reputation_delta).max(0);
         profile.level = level_for_xp(profile.xp);
         profile.updated_at = now;
         self.store_profile(profile.clone());
@@ -290,12 +286,7 @@ impl MemoryStore {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn profile(
-        &self,
-        guild_id: &str,
-        user_id: &str,
-        now: chrono::DateTime<Utc>,
-    ) -> MemberProgress {
+    fn profile(&self, guild_id: &str, user_id: &str, now: chrono::DateTime<Utc>) -> MemberProgress {
         let key = (guild_id.to_owned(), user_id.to_owned());
         self.progression.get(&key).map_or_else(
             || {
@@ -308,9 +299,7 @@ impl MemoryStore {
     }
 
     fn store_profile(&self, profile: MemberProgress) {
-        self.progression.insert(
-            (profile.guild_id.clone(), profile.user_id.clone()),
-            profile,
-        );
+        self.progression
+            .insert((profile.guild_id.clone(), profile.user_id.clone()), profile);
     }
 }

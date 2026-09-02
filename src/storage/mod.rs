@@ -111,12 +111,9 @@ impl Storage {
         cooldown_seconds: u32,
     ) -> anyhow::Result<XpAward> {
         match self {
-            Self::Memory(store) => Ok(store.award_message_xp(
-                guild_id,
-                user_id,
-                amount,
-                cooldown_seconds,
-            )),
+            Self::Memory(store) => {
+                Ok(store.award_message_xp(guild_id, user_id, amount, cooldown_seconds))
+            }
             Self::Postgres(store) => {
                 store
                     .award_message_xp(guild_id, user_id, amount, cooldown_seconds)
@@ -163,12 +160,9 @@ impl Storage {
         amount: i64,
     ) -> anyhow::Result<CoinTransferOutcome> {
         match self {
-            Self::Memory(store) => Ok(store.transfer_coins(
-                guild_id,
-                sender_user_id,
-                recipient_user_id,
-                amount,
-            )),
+            Self::Memory(store) => {
+                Ok(store.transfer_coins(guild_id, sender_user_id, recipient_user_id, amount))
+            }
             Self::Postgres(store) => {
                 store
                     .transfer_coins(guild_id, sender_user_id, recipient_user_id, amount)
@@ -245,11 +239,7 @@ impl Storage {
     ) -> anyhow::Result<Vec<MemberProgress>> {
         match self {
             Self::Memory(store) => Ok(store.progression_leaderboard(guild_id, metric, limit)),
-            Self::Postgres(store) => {
-                store
-                    .progression_leaderboard(guild_id, metric, limit)
-                    .await
-            }
+            Self::Postgres(store) => store.progression_leaderboard(guild_id, metric, limit).await,
         }
     }
 }
