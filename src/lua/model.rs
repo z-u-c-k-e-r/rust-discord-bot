@@ -49,10 +49,7 @@ impl LuaCommandDefinition {
     pub fn resolved_contexts(&self) -> Vec<LuaInteractionContext> {
         self.contexts.clone().unwrap_or_else(|| {
             if self.dm_permission == Some(true) {
-                vec![
-                    LuaInteractionContext::Guild,
-                    LuaInteractionContext::BotDm,
-                ]
+                vec![LuaInteractionContext::Guild, LuaInteractionContext::BotDm]
             } else {
                 vec![LuaInteractionContext::Guild]
             }
@@ -85,9 +82,7 @@ impl LuaCommandDefinition {
         if contexts.contains(&LuaInteractionContext::PrivateChannel)
             && !integration_types.contains(&LuaInstallationContext::User)
         {
-            return Err(
-                "private_channel context requires the user installation type".to_owned(),
-            );
+            return Err("private_channel context requires the user installation type".to_owned());
         }
 
         Ok(())
@@ -421,10 +416,7 @@ mod tests {
 
         assert_eq!(
             definition.resolved_contexts(),
-            vec![
-                LuaInteractionContext::Guild,
-                LuaInteractionContext::BotDm
-            ]
+            vec![LuaInteractionContext::Guild, LuaInteractionContext::BotDm]
         );
         assert!(definition.validate_contexts().is_ok());
     }
