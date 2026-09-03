@@ -66,6 +66,9 @@ jobs:
       - name: Build release binary
         run: cargo build --locked --release
 
+      - name: Keep workflow administration out of the source commit
+        run: git checkout -- .github/workflows/ci.yml
+
       - name: Remove one-time integration transport
         run: |
           rm -f .github/scheduler-integration.trigger
@@ -73,7 +76,6 @@ jobs:
           rm -f .github/scripts/fix_scheduler_sql.py
           rm -f .github/scripts/fix_scheduler_enum_sizes.py
           rm -f .github/scripts/fix_scheduler_lua_keyword.py
-          rm -f .github/workflows/apply-scheduler.yml
 
       - name: Commit validated scheduler implementation
         run: |
