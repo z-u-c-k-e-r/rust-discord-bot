@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - feat/progression-economy
+      - feat/persistent-scheduler-reminders
 
 permissions:
   contents: read
