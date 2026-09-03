@@ -1,7 +1,8 @@
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-use super::GuildModuleSettings;
+use super::{GuildModuleSettings, ModerationCase};
 
 #[derive(Clone)]
 pub struct PostgresStore {
@@ -66,6 +67,172 @@ impl PostgresStore {
         .await?;
 
         Ok(result)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_moderation_case(
+        &self,
+        guild_id: &str,
+        target_user_id: &str,
+        moderator_user_id: &str,
+        action: &str,
+        reason: &str,
+        expires_at: Option<DateTime<Utc>>,
+        metadata: Value,
+        points: i32,
+    ) -> anyhow::Result<ModerationCase> {
+        let result = sqlx::query_as::<_, ModerationCase>(
+            r#"
+            INSERT INTO moderation_cases (
+                guild_id,
+                target_user_id,
+                moderator_user_id,
+                action,
+                reason,
+                expires_at,
+                metadata,
+                points
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING
+                id,
+                guild_id,
+                target_user_id,
+                moderator_user_id,
+                action,
+                reason,
+                expires_at,
+                metadata,
+                points,
+                status,
+                resolution,
+                resolved_by_user_id,
+                resolved_at,
+                created_at
+            "#,
+        )
+        .bind(guild_id)
+        .bind(target_user_id)
+        .bind(moderator_user_id)
+        .bind(action)
+        .bind(reason)
+        .bind(expires_at)
+        .bind(metadata)
+        .bind(points)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(result)
+    }
+
+    pub async fn list_moderation_cases(
+        &self,
+        guild_id: &str,
+        target_user_id: &str,
+        include_resolved: bool,
+        limit: u8,
+    ) -> anyhow::Result<Vec<ModerationCase>> {
+        let result = sqlx::query_as::<_, ModerationCase>(
+            r#"
+            SELECT
+                id,
+                guild_id,
+                target_user_id,
+                moderator_user_id,
+                action,
+                reason,
+                expires_at,
+                metadata,
+                points,
+                status,
+                resolution,
+                resolved_by_user_id,
+                resolved_at,
+                created_at
+            FROM moderation_cases
+            WHERE guild_id = $1
+                AND target_user_id = $2
+                AND ($3 OR status = 'open')
+            ORDER BY created_at DESC
+            LIMIT $4
+            "#,
+        )
+        .bind(guild_id)
+        .bind(target_user_id)
+        .bind(include_resolved)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(result)
+    }
+
+    pub async fn resolve_moderation_case(
+        &self,
+        guild_id: &str,
+        case_id: i64,
+        resolved_by_user_id: &str,
+        resolution: &str,
+    ) -> anyhow::Result<Option<ModerationCase>> {
+        let result = sqlx::query_as::<_, ModerationCase>(
+            r#"
+            UPDATE moderation_cases
+            SET
+                status = 'resolved',
+                resolution = $4,
+                resolved_by_user_id = $3,
+                resolved_at = NOW()
+            WHERE guild_id = $1
+                AND id = $2
+                AND status = 'open'
+            RETURNING
+                id,
+                guild_id,
+                target_user_id,
+                moderator_user_id,
+                action,
+                reason,
+                expires_at,
+                metadata,
+                points,
+                status,
+                resolution,
+                resolved_by_user_id,
+                resolved_at,
+                created_at
+            "#,
+        )
+        .bind(guild_id)
+        .bind(case_id)
+        .bind(resolved_by_user_id)
+        .bind(resolution)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(result)
+    }
+
+    pub async fn active_moderation_points(
+        &self,
+        guild_id: &str,
+        target_user_id: &str,
+    ) -> anyhow::Result<i64> {
+        let points = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COALESCE(SUM(points), 0)::BIGINT
+            FROM moderation_cases
+            WHERE guild_id = $1
+                AND target_user_id = $2
+                AND status = 'open'
+                AND (expires_at IS NULL OR expires_at > NOW())
+            "#,
+        )
+        .bind(guild_id)
+        .bind(target_user_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(points)
     }
 
     pub async fn record_audit(
