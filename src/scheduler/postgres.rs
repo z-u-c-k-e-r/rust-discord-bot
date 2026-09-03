@@ -122,7 +122,7 @@ impl PostgresSchedulerStore {
         .await?;
 
         transaction.commit().await?;
-        Ok(CreateJobOutcome::Created(created))
+        Ok(CreateJobOutcome::Created(Box::new(created)))
     }
 
     pub async fn list_jobs(
@@ -132,47 +132,81 @@ impl PostgresSchedulerStore {
         include_all: bool,
         limit: u8,
     ) -> anyhow::Result<Vec<ScheduledJob>> {
-        let common_tail = r#"
-              AND status IN ('active', 'paused', 'processing')
-            ORDER BY run_at ASC, id ASC
-            LIMIT $3
-        "#;
-        let query = if include_all {
-            format!(
+        if include_all {
+            Ok(sqlx::query_as::<_, ScheduledJob>(
                 r#"
                 SELECT
-                    id::text AS id, guild_id, module_id, channel_id, creator_user_id,
-                    content, mention_creator, run_at, repeat_every_seconds, remaining_runs,
-                    run_count, status, attempts, max_attempts, locked_at, locked_by,
-                    last_error, last_run_at, completed_at, created_at, updated_at
+                    id::text AS id,
+                    guild_id,
+                    module_id,
+                    channel_id,
+                    creator_user_id,
+                    content,
+                    mention_creator,
+                    run_at,
+                    repeat_every_seconds,
+                    remaining_runs,
+                    run_count,
+                    status,
+                    attempts,
+                    max_attempts,
+                    locked_at,
+                    locked_by,
+                    last_error,
+                    last_run_at,
+                    completed_at,
+                    created_at,
+                    updated_at
                 FROM scheduled_jobs
                 WHERE guild_id = $1
-                  AND $2 = $2
-                {common_tail}
-                "#
+                  AND status IN ('active', 'paused', 'processing')
+                ORDER BY run_at ASC, id ASC
+                LIMIT $2
+                "#,
             )
+            .bind(guild_id)
+            .bind(i64::from(limit))
+            .fetch_all(&self.pool)
+            .await?)
         } else {
-            format!(
+            Ok(sqlx::query_as::<_, ScheduledJob>(
                 r#"
                 SELECT
-                    id::text AS id, guild_id, module_id, channel_id, creator_user_id,
-                    content, mention_creator, run_at, repeat_every_seconds, remaining_runs,
-                    run_count, status, attempts, max_attempts, locked_at, locked_by,
-                    last_error, last_run_at, completed_at, created_at, updated_at
+                    id::text AS id,
+                    guild_id,
+                    module_id,
+                    channel_id,
+                    creator_user_id,
+                    content,
+                    mention_creator,
+                    run_at,
+                    repeat_every_seconds,
+                    remaining_runs,
+                    run_count,
+                    status,
+                    attempts,
+                    max_attempts,
+                    locked_at,
+                    locked_by,
+                    last_error,
+                    last_run_at,
+                    completed_at,
+                    created_at,
+                    updated_at
                 FROM scheduled_jobs
                 WHERE guild_id = $1
                   AND creator_user_id = $2
-                {common_tail}
-                "#
+                  AND status IN ('active', 'paused', 'processing')
+                ORDER BY run_at ASC, id ASC
+                LIMIT $3
+                "#,
             )
-        };
-
-        Ok(sqlx::query_as::<_, ScheduledJob>(&query)
             .bind(guild_id)
             .bind(creator_user_id)
             .bind(i64::from(limit))
             .fetch_all(&self.pool)
             .await?)
+        }
     }
 
     pub async fn mutate_job(
@@ -270,7 +304,7 @@ impl PostgresSchedulerStore {
             .await?
             .expect("updated scheduler job should still exist");
         transaction.commit().await?;
-        Ok(JobMutationOutcome::Updated(updated))
+        Ok(JobMutationOutcome::Updated(Box::new(updated)))
     }
 
     pub async fn claim_due(

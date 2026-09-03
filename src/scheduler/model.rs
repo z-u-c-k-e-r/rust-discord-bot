@@ -45,7 +45,9 @@ impl ScheduledJob {
     pub fn is_claimable(&self, now: DateTime<Utc>, stale_before: DateTime<Utc>) -> bool {
         (self.status == STATUS_ACTIVE && self.run_at <= now)
             || (self.status == STATUS_PROCESSING
-                && self.locked_at.is_some_and(|locked_at| locked_at < stale_before))
+                && self
+                    .locked_at
+                    .is_some_and(|locked_at| locked_at < stale_before))
     }
 
     pub fn claim(&mut self, worker_id: &str, now: DateTime<Utc>) {
@@ -107,7 +109,9 @@ impl ScheduledJob {
 
     pub fn retry_delay_seconds(&self) -> u32 {
         let exponent = self.attempts.saturating_sub(1).clamp(0, 6) as u32;
-        5_u32.saturating_mul(2_u32.saturating_pow(exponent)).min(300)
+        5_u32
+            .saturating_mul(2_u32.saturating_pow(exponent))
+            .min(300)
     }
 
     pub fn short_id(&self) -> &str {
@@ -159,7 +163,7 @@ impl NewScheduledJob {
 
 #[derive(Clone, Debug)]
 pub enum CreateJobOutcome {
-    Created(ScheduledJob),
+    Created(Box<ScheduledJob>),
     LimitReached { limit: u16 },
 }
 
@@ -182,7 +186,7 @@ impl JobMutation {
 
 #[derive(Clone, Debug)]
 pub enum JobMutationOutcome {
-    Updated(ScheduledJob),
+    Updated(Box<ScheduledJob>),
     NotFound,
     Forbidden,
     InvalidState { current_status: String },

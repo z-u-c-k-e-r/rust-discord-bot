@@ -48,7 +48,7 @@ impl SchedulerStore {
         }
     }
 
-    pub const fn memory() -> Self {
+    pub fn memory() -> Self {
         Self::Memory(MemorySchedulerStore::default())
     }
 
@@ -89,13 +89,9 @@ impl SchedulerStore {
         mutation: JobMutation,
     ) -> Result<JobMutationOutcome> {
         match self {
-            Self::Memory(store) => Ok(store.mutate_job(
-                guild_id,
-                job_id,
-                actor_user_id,
-                allow_any,
-                mutation,
-            )),
+            Self::Memory(store) => {
+                Ok(store.mutate_job(guild_id, job_id, actor_user_id, allow_any, mutation))
+            }
             Self::Postgres(store) => Ok(store
                 .mutate_job(guild_id, job_id, actor_user_id, allow_any, mutation)
                 .await?),
@@ -111,9 +107,9 @@ impl SchedulerStore {
     ) -> Result<Vec<ScheduledJob>> {
         match self {
             Self::Memory(store) => Ok(store.claim_due(worker_id, now, stale_before, limit)),
-            Self::Postgres(store) => Ok(store
-                .claim_due(worker_id, now, stale_before, limit)
-                .await?),
+            Self::Postgres(store) => {
+                Ok(store.claim_due(worker_id, now, stale_before, limit).await?)
+            }
         }
     }
 
@@ -125,9 +121,7 @@ impl SchedulerStore {
     ) -> Result<Option<ScheduledJob>> {
         match self {
             Self::Memory(store) => Ok(store.mark_succeeded(job_id, worker_id, now)),
-            Self::Postgres(store) => {
-                Ok(store.mark_succeeded(job_id, worker_id, now).await?)
-            }
+            Self::Postgres(store) => Ok(store.mark_succeeded(job_id, worker_id, now).await?),
         }
     }
 

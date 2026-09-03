@@ -1,6 +1,7 @@
 mod engine;
 mod model;
 mod progression;
+mod scheduler;
 
 pub use engine::{LuaEngine, LuaEngineError, LuaLimits};
 pub use model::{
@@ -9,3 +10,4 @@ pub use model::{
     MusicOperation,
 };
 pub use progression::{ProgressionMetric, ProgressionOperation};
+pub use scheduler::{SchedulerOperation, SchedulerScope};

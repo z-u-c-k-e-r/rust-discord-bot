@@ -69,9 +69,7 @@ impl SchedulerOperation {
                 if let Some(repeat) = repeat {
                     let repeat_length = repeat.trim().chars().count();
                     if repeat_length == 0 || repeat_length > 64 {
-                        return Err(
-                            "repeat interval must contain 1 to 64 characters".to_owned()
-                        );
+                        return Err("repeat interval must contain 1 to 64 characters".to_owned());
                     }
                 }
 
@@ -88,9 +86,7 @@ impl SchedulerOperation {
                     return Err("max_jobs must be between 1 and 500".to_owned());
                 }
                 if !(10..=3_600).contains(minimum_delay_seconds) {
-                    return Err(
-                        "minimum_delay_seconds must be between 10 and 3600".to_owned()
-                    );
+                    return Err("minimum_delay_seconds must be between 10 and 3600".to_owned());
                 }
                 if *maximum_delay_seconds < u64::from(*minimum_delay_seconds)
                     || *maximum_delay_seconds > MAX_SCHEDULE_HORIZON_SECONDS

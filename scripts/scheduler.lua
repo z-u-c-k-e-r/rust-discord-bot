@@ -295,7 +295,7 @@ return {
             if not has_manage_guild(ctx) then
                 return reply("Ta komenda wymaga uprawnienia Zarządzanie serwerem.")
             end
-            if ctx.options.runs and not ctx.options.repeat then
+            if ctx.options.runs and not ctx.options["repeat"] then
                 return reply("Liczba wykonań wymaga podania interwału repeat.")
             end
 
@@ -309,7 +309,7 @@ return {
                 when = ctx.options.when,
                 content = ctx.options.message,
                 channel_id = ctx.options.channel,
-                repeat = ctx.options.repeat,
+                ["repeat"] = ctx.options["repeat"],
                 repeat_count = math.tointeger(ctx.options.runs),
                 mention_creator = mention_creator,
                 max_jobs = maximum_jobs,

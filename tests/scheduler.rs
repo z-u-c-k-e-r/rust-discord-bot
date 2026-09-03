@@ -3,9 +3,7 @@ use std::path::PathBuf;
 use chrono::{Duration, Utc};
 use serde_json::json;
 use zuckerbot::{
-    lua::{
-        LuaAction, LuaEngine, LuaExecutionContext, LuaLimits, SchedulerOperation,
-    },
+    lua::{LuaAction, LuaEngine, LuaExecutionContext, LuaLimits, SchedulerOperation},
     scheduler::{
         CreateJobOutcome, JobMutation, JobMutationOutcome, NewScheduledJob, STATUS_ACTIVE,
         STATUS_COMPLETED, STATUS_PROCESSING, SchedulerStore,
@@ -70,7 +68,7 @@ async fn created_job(
         .await
         .expect("memory scheduler create should succeed")
     {
-        CreateJobOutcome::Created(job) => job,
+        CreateJobOutcome::Created(job) => *job,
         CreateJobOutcome::LimitReached { limit } => {
             panic!("unexpected scheduler limit {limit}")
         }
@@ -133,12 +131,7 @@ async fn lease_prevents_two_workers_from_claiming_the_same_job() {
     let created = created_job(&store, new_job(now - Duration::seconds(1)), 10).await;
 
     let first = store
-        .claim_due(
-            "worker-a",
-            now,
-            now - Duration::seconds(60),
-            25,
-        )
+        .claim_due("worker-a", now, now - Duration::seconds(60), 25)
         .await
         .expect("first claim should succeed");
     assert_eq!(first.len(), 1);
@@ -146,12 +139,7 @@ async fn lease_prevents_two_workers_from_claiming_the_same_job() {
     assert_eq!(first[0].status, STATUS_PROCESSING);
 
     let second = store
-        .claim_due(
-            "worker-b",
-            now,
-            now - Duration::seconds(60),
-            25,
-        )
+        .claim_due("worker-b", now, now - Duration::seconds(60), 25)
         .await
         .expect("second claim should succeed");
     assert!(second.is_empty());
@@ -167,12 +155,7 @@ async fn finite_recurring_job_reschedules_then_completes() {
     let created = created_job(&store, recurring, 10).await;
 
     let first_claim = store
-        .claim_due(
-            "worker-a",
-            now,
-            now - Duration::seconds(60),
-            1,
-        )
+        .claim_due("worker-a", now, now - Duration::seconds(60), 1)
         .await
         .expect("claim should succeed");
     assert_eq!(first_claim.len(), 1);
@@ -207,12 +190,7 @@ async fn finite_recurring_job_reschedules_then_completes() {
 #[tokio::test]
 async fn non_owner_cannot_modify_another_users_job() {
     let store = SchedulerStore::memory();
-    let created = created_job(
-        &store,
-        new_job(Utc::now() + Duration::minutes(5)),
-        10,
-    )
-    .await;
+    let created = created_job(&store, new_job(Utc::now() + Duration::minutes(5)), 10).await;
 
     let denied = store
         .mutate_job(

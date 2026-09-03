@@ -3,6 +3,9 @@ mod executor;
 mod handler;
 mod music;
 mod progression;
+mod scheduler;
+
+use std::sync::Arc;
 
 use anyhow::Result;
 use serenity::{
@@ -29,6 +32,12 @@ pub async fn run(state: AppState) -> Result<()> {
         .register_songbird()
         .await?;
 
-    client.start_autosharded().await?;
+    let scheduler_worker = tokio::spawn(crate::scheduler::run_worker(
+        Arc::clone(&client.http),
+        state.clone(),
+    ));
+    let client_result = client.start_autosharded().await;
+    scheduler_worker.abort();
+    client_result?;
     Ok(())
 }

@@ -50,12 +50,7 @@ pub fn parse_schedule_time(
         Err(_) => parse_absolute_timestamp(value)?,
     };
 
-    validate_horizon(
-        target,
-        now,
-        minimum_delay_seconds,
-        maximum_delay_seconds,
-    )
+    validate_horizon(target, now, minimum_delay_seconds, maximum_delay_seconds)
 }
 
 pub fn parse_repeat_interval(value: &str) -> Result<i64, ScheduleTimeError> {
@@ -128,12 +123,7 @@ fn parse_absolute(
     maximum_delay_seconds: u64,
 ) -> Result<DateTime<Utc>, ScheduleTimeError> {
     let target = parse_absolute_timestamp(value)?;
-    validate_horizon(
-        target,
-        now,
-        minimum_delay_seconds,
-        maximum_delay_seconds,
-    )
+    validate_horizon(target, now, minimum_delay_seconds, maximum_delay_seconds)
 }
 
 fn parse_absolute_timestamp(value: &str) -> Result<DateTime<Utc>, ScheduleTimeError> {

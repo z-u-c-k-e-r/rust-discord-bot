@@ -87,13 +87,9 @@ pub async fn execute(
             maximum_delay_seconds,
         } => {
             let now = chrono::Utc::now();
-            let run_at = parse_schedule_time(
-                when,
-                now,
-                *minimum_delay_seconds,
-                *maximum_delay_seconds,
-            )
-            .map_err(|error| anyhow!("nieprawidłowy termin: {error}"))?;
+            let run_at =
+                parse_schedule_time(when, now, *minimum_delay_seconds, *maximum_delay_seconds)
+                    .map_err(|error| anyhow!("nieprawidłowy termin: {error}"))?;
 
             let target_channel = match channel_id {
                 Some(channel_id) => {
@@ -222,13 +218,7 @@ async fn mutate_job(
 ) -> Result<Option<String>> {
     let outcome = state
         .scheduler
-        .mutate_job(
-            guild_id,
-            job_id,
-            actor_user_id,
-            allow_any,
-            mutation,
-        )
+        .mutate_job(guild_id, job_id, actor_user_id, allow_any, mutation)
         .await?;
 
     match outcome {

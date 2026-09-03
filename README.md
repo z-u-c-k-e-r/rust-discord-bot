@@ -35,7 +35,7 @@ A Lua script never receives the Discord bot token, raw database credentials, unr
 - controlled migration from the deprecated `dm_permission` manifest field
 - event dispatch for `message_create` and `guild_member_add`
 - sandboxed Lua 5.4 with memory and global instruction limits
-- validated action API for replies, messages, moderation, roles, purge, music and audit events
+- validated action API for replies, messages, moderation, roles, purge, music, progression, persistent scheduling and audit events
 - action-level Discord permission checks
 - bot, moderator and target role-hierarchy checks
 - Songbird voice connection and queue controls
@@ -44,7 +44,8 @@ A Lua script never receives the Discord bot token, raw database credentials, unr
 - per-guild module enable/disable and JSON configuration
 - HttpOnly sessions, OAuth2 state validation and CSRF protection
 - PostgreSQL migrations with an in-memory development fallback
-- audit records for privileged actions and dashboard changes
+- audit records for privileged actions, scheduler transitions and dashboard changes
+- lease-based PostgreSQL scheduler with retries, pause/resume and an in-memory test fallback
 - Docker Compose development deployment
 - CI formatting, linting, tests, release build and production-container build
 
@@ -58,7 +59,15 @@ Bundled Lua modules:
 | `roles.lua` | `/role` add/remove |
 | `music.lua` | `/music` play, pause, resume, skip, stop, queue and leave |
 | `welcome.lua` | configurable `guild_member_add` welcome automation |
-| `automod.lua` | configurable `message_create` blocked-word example |
+| `automod.lua` | multi-rule message safety and anti-abuse engine |
+| `progression.lua` | XP, levels, coins, daily streaks, reputation and leaderboards |
+| `scheduler.lua` | persistent reminders and recurring server messages |
+| `community.lua` | suggestions, reports, feedback, applications and bug reports |
+| `utility.lua` | calculations, conversions, timestamps and Discord utilities |
+| `games.lua` | social games, dice, teams and cosmetic drops |
+| `staff_tools.lua` | announcements, broadcasts, alerts, rules and audit notes |
+| `server_info.lua` | rules, FAQ, links, support, staff and schedule |
+| `join_guard.lua` | account-age and suspicious-join safety signals |
 
 ## Architecture
 

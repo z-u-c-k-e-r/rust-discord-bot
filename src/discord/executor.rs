@@ -16,7 +16,7 @@ use serenity::{
 
 use crate::{AppState, lua::LuaAction};
 
-use super::{music, progression};
+use super::{music, progression, scheduler};
 
 struct ActionOrigin {
     guild_id: Option<GuildId>,
@@ -401,6 +401,22 @@ async fn execute_action(
                 state,
                 module_id,
                 progression::ProgressionExecutionContext::new(
+                    origin.guild_id,
+                    origin.channel_id,
+                    origin.actor_id,
+                    origin.actor_permissions,
+                    origin.enforce_actor_permissions,
+                ),
+                operation,
+            )
+            .await
+        }
+        LuaAction::Scheduler { operation } => {
+            scheduler::execute(
+                ctx,
+                state,
+                module_id,
+                scheduler::SchedulerExecutionContext::new(
                     origin.guild_id,
                     origin.channel_id,
                     origin.actor_id,

@@ -33,7 +33,7 @@ impl MemorySchedulerStore {
 
         let job = job.materialize(Utc::now());
         jobs.insert(job.id.clone(), job.clone());
-        CreateJobOutcome::Created(job)
+        CreateJobOutcome::Created(Box::new(job))
     }
 
     pub fn list_jobs(
@@ -112,7 +112,7 @@ impl MemorySchedulerStore {
         job.locked_at = None;
         job.locked_by = None;
         job.updated_at = now;
-        JobMutationOutcome::Updated(job.clone())
+        JobMutationOutcome::Updated(Box::new(job.clone()))
     }
 
     pub fn claim_due(
