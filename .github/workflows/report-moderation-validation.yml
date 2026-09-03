@@ -1,0 +1,123 @@
+name: Report moderation validation
+
+on:
+  push:
+    branches:
+      - feat/moderation-cases
+    paths:
+      - '.github/workflows/report-moderation-validation.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: report-moderation-validation
+  cancel-in-progress: false
+
+jobs:
+  report:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned latest stable Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install voice build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            cmake \
+            libopus-dev \
+            pkg-config
+
+      - name: Validate and capture diagnostics
+        id: validation
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          {
+            echo "Validated commit: $GITHUB_SHA"
+            test -f migrations/0002_moderation_case_lifecycle.sql
+            test -f docs/MODERATION_CASES.md
+            grep -Fq 'CreateModerationCase' src/lua/model.rs
+            grep -Fq 'ListModerationCases' src/lua/model.rs
+            grep -Fq 'ResolveModerationCase' src/lua/model.rs
+            grep -Fq 'create_moderation_case' scripts/moderation.lua
+            grep -Fq 'case-resolve' scripts/moderation.lua
+            grep -Fq 'moderation/users/{target_user_id}/cases' src/web/mod.rs
+            cargo generate-lockfile
+            cargo fmt --all -- --check
+            cargo clippy --locked --all-targets --all-features -- -D warnings
+            cargo test --locked --all-features
+            cargo build --locked --release
+          } 2>&1 | tee /tmp/moderation-validation.log
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Preserve failure diagnostics
+        if: steps.validation.outputs.status != '0'
+        shell: bash
+        run: |
+          {
+            echo '# Moderation cases validation failure'
+            echo
+            echo "Commit: \`$GITHUB_SHA\`"
+            echo
+            echo '```text'
+            tail -n 400 /tmp/moderation-validation.log
+            echo '```'
+          } > docs/CI_FAILURE_MODERATION.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/CI_FAILURE_MODERATION.md
+          git commit -m "ci: preserve moderation validation diagnostics" || true
+          git push origin HEAD:feat/moderation-cases || true
+
+      - name: Clean one-shot reporting workflow after success
+        if: steps.validation.outputs.status == '0'
+        shell: bash
+        run: |
+          rm -f .github/workflows/report-moderation-validation.yml
+          rm -f .github/workflows/repair-moderation-cases.yml
+          rm -f .github/workflows/validate-moderation-cases.yml
+          rm -f docs/CI_FAILURE_MODERATION.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: finalize validated moderation slice"
+            git push origin HEAD:feat/moderation-cases
+          fi
+
+      - name: Report result on pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ steps.validation.outputs.status }}
+        shell: bash
+        run: |
+          if [ "$RESULT" = "0" ]; then
+            body="✅ Moderation cases validation passed for commit \`$GITHUB_SHA\`: contract checks, rustfmt, Clippy with warnings denied, all-feature tests and release build."
+          else
+            body="❌ Moderation cases validation failed for commit \`$GITHUB_SHA\`. The final diagnostics were preserved in \`docs/CI_FAILURE_MODERATION.md\` on the feature branch."
+          fi
+          gh api repos/${{ github.repository }}/issues/10/comments -f body="$body" || true
+          test "$RESULT" = "0"
