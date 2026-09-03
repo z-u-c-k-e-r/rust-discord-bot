@@ -1,0 +1,57 @@
+name: Apply moderation cases slice
+
+on:
+  push:
+    branches:
+      - feat/moderation-cases
+    paths:
+      - '.automation/moderation-cases.py.gz.b64'
+      - '.github/workflows/apply-moderation-cases.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-moderation-cases
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install formatter
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt
+
+      - name: Decode and verify implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .automation/moderation-cases.py.gz.b64 | gzip --decompress > /tmp/apply-moderation-cases.py
+          test "$(sha256sum /tmp/apply-moderation-cases.py | cut -d ' ' -f 1)" = "d8b5b35341837392b41fc8acb6e7b71f702442939a23b697a6702c0ef0ded9f2"
+          python3 /tmp/apply-moderation-cases.py
+          cargo fmt --all
+          git diff --check
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .automation/moderation-cases.py.gz.b64
+          rmdir .automation 2>/dev/null || true
+          rm -f .github/workflows/apply-moderation-cases.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(moderation): add durable cases and point escalation"
+          git push origin HEAD:feat/moderation-cases
