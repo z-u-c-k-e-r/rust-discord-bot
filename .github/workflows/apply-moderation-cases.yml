@@ -1,0 +1,151 @@
+name: Apply moderation case persistence
+
+on:
+  push:
+    branches:
+      - feat/moderation-case-management
+    paths:
+      - '.github/moderation-cases.trigger'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-moderation-case-persistence
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: zuckerbot
+          POSTGRES_USER: zuckerbot
+          POSTGRES_PASSWORD: zuckerbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zuckerbot -d zuckerbot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Check out moderation branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned current stable Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install native and PostgreSQL tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            cmake \
+            libopus-dev \
+            pkg-config \
+            postgresql-client
+
+      - name: Verify current stable Rust policy
+        run: bash scripts/check-latest-rust.sh
+
+      - name: Expose validated case module
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/lib.rs')
+          source = path.read_text(encoding='utf-8')
+          declaration = 'pub mod moderation_cases;\n'
+          if declaration not in source:
+              marker = 'pub mod lua;\n'
+              if marker in source:
+                  source = source.replace(marker, marker + declaration, 1)
+              else:
+                  source = declaration + source
+          path.write_text(source, encoding='utf-8')
+          PY
+
+      - name: Format source
+        run: cargo fmt --all
+
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Run unit and contract tests
+        run: cargo test --locked --all-features
+
+      - name: Validate every PostgreSQL migration
+        env:
+          PGPASSWORD: zuckerbot
+        shell: bash
+        run: |
+          set -euo pipefail
+          for migration in migrations/*.sql; do
+            echo "Applying ${migration}"
+            psql \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username zuckerbot \
+              --dbname zuckerbot \
+              --set ON_ERROR_STOP=1 \
+              --file "${migration}"
+          done
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Validate dashboard JavaScript
+        run: node --check web/static/app.js
+
+      - name: Validate Compose configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          trap 'rm -f .env' EXIT
+          docker compose -f compose.yaml config --quiet
+
+      - name: Build production image
+        run: docker build --tag zuckerbot:moderation-cases-ci .
+
+      - name: Record durable worklog
+        shell: bash
+        run: |
+          cat >> WORKLOG.md <<'MD'
+
+          ## 2026-09-03 — moderation case persistence
+
+          - Added a versioned moderation-case domain with per-guild human-readable numbering.
+          - Added memory and PostgreSQL backends, notes, evidence, immutable events, lazy expiration, void/restore and aggregate statistics.
+          - Added migration `0005_moderation_cases.sql`, contract tests and administrator documentation.
+          - Discord/Lua authorization and commands remain the next stacked slice; storage does not expose SQL or privileged actions to Lua.
+          MD
+
+      - name: Remove one-time integration transport
+        run: |
+          rm -f .github/moderation-cases.trigger
+          rm -f .github/workflows/apply-moderation-cases.yml
+
+      - name: Commit validated moderation persistence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(cases): integrate persistent moderation case store"
+          git push origin HEAD:feat/moderation-case-management
