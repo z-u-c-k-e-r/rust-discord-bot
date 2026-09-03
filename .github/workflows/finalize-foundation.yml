@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  finalize:
+  lockfile:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -27,68 +27,24 @@ jobs:
           ref: feat/lua-platform-foundation
           fetch-depth: 0
 
-      - name: Generate and enforce the application lockfile
+      - name: Generate exact dependency lock
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.98.1 --profile minimal --no-self-update
           rustup override set 1.98.1
           cargo generate-lockfile
-
-          python3 <<'PY'
-          import re
-          from pathlib import Path
-
-          ci_path = Path('.github/workflows/ci.yml')
-          ci = ci_path.read_text(encoding='utf-8')
-          ci, replacements = re.subn(
-              r'(?m)^      - name: Resolve the pinned dependency graph\n        run: cargo generate-lockfile$',
-              '      - name: Verify committed dependency lock\n'
-              '        run: cargo metadata --locked --format-version 1 > /dev/null',
-              ci,
-          )
-          if replacements != 1:
-              raise SystemExit(f'expected one CI lockfile block, replaced {replacements}')
-          ci_path.write_text(ci, encoding='utf-8')
-
-          docker_path = Path('Dockerfile')
-          docker = docker_path.read_text(encoding='utf-8')
-          docker, copy_replacements = re.subn(
-              r'^COPY Cargo\.toml rust-toolchain\.toml \./$',
-              'COPY Cargo.toml Cargo.lock rust-toolchain.toml ./',
-              docker,
-              flags=re.MULTILINE,
-          )
-          docker, build_replacements = re.subn(
-              r'RUN cargo generate-lockfile \\\n\s*&& cargo build --locked --release',
-              'RUN cargo build --locked --release',
-              docker,
-          )
-          if copy_replacements != 1 or build_replacements != 1:
-              raise SystemExit(
-                  'unexpected Dockerfile replacements: '
-                  f'copy={copy_replacements}, build={build_replacements}'
-              )
-          docker_path.write_text(docker, encoding='utf-8')
-          PY
-
-          rm -f .github/modernize-stack.trigger
-          rm -f .github/workflows/modernize-stack.yml
-          rm -f .github/workflows/refresh-current-stable.yml
-          rm -f .github/workflows/finalize-foundation.yml
-
           test -s Cargo.lock
           cargo metadata --locked --format-version 1 > /dev/null
-          ! grep -R "contents: write" .github/workflows
-          ! grep -R "cargo generate-lockfile" .github/workflows/ci.yml Dockerfile
-          git diff --check
+          git diff --check -- Cargo.lock
 
-      - name: Commit reproducible foundation state
+      - name: Commit only Cargo.lock
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "build: commit dependency lock and remove bootstrap writers"
+          git add Cargo.lock
+          test "$(git diff --cached --name-only)" = "Cargo.lock"
+          git commit -m "build: commit reproducible dependency lock"
           git push origin HEAD:feat/lua-platform-foundation
