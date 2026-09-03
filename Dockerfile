@@ -32,14 +32,13 @@ RUN apt-get update \
     && cargo --version \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src ./src
 COPY migrations ./migrations
 COPY scripts ./scripts
 COPY web ./web
 
-RUN cargo generate-lockfile \
-    && cargo build --locked --release
+RUN cargo build --locked --release
 
 FROM debian:${DEBIAN_SUITE}-slim AS runtime
 
