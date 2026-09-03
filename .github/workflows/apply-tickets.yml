@@ -66,6 +66,9 @@ jobs:
       - name: Apply ticket integration patch
         run: python .github/scripts/apply_ticket_integration.py
 
+      - name: Apply strict Clippy corrections
+        run: python .github/scripts/fix_ticket_clippy.py
+
       - name: Format source
         run: cargo fmt --all
 
@@ -111,6 +114,7 @@ jobs:
         run: |
           rm -f .github/ticket-integration.trigger
           rm -f .github/scripts/apply_ticket_integration.py
+          rm -f .github/scripts/fix_ticket_clippy.py
 
       - name: Commit validated ticket implementation
         run: |
