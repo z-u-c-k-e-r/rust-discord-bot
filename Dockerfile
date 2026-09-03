@@ -1,16 +1,35 @@
 ARG RUST_VERSION=1.98.1
 ARG DEBIAN_SUITE=trixie
 
-FROM rust:${RUST_VERSION}-${DEBIAN_SUITE} AS builder
+FROM debian:${DEBIAN_SUITE}-slim AS builder
+
+ARG RUST_VERSION
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
+    PATH=/opt/cargo/bin:${PATH}
 
 WORKDIR /app
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         build-essential \
+        ca-certificates \
         cmake \
+        curl \
         libopus-dev \
         pkg-config \
+    && curl --fail --silent --show-error --location \
+        --proto '=https' --tlsv1.2 \
+        https://sh.rustup.rs \
+        --output /tmp/rustup-init.sh \
+    && sh /tmp/rustup-init.sh \
+        --yes \
+        --profile minimal \
+        --default-toolchain "${RUST_VERSION}" \
+        --no-modify-path \
+    && rm -f /tmp/rustup-init.sh \
+    && test "$(rustc --version | awk '{ print $2 }')" = "${RUST_VERSION}" \
+    && cargo --version \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml rust-toolchain.toml ./
