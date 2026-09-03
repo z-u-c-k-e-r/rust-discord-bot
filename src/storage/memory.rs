@@ -101,7 +101,7 @@ impl MemoryStore {
             })
             .map(|entry| entry.value().clone())
             .collect::<Vec<_>>();
-        cases.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        cases.sort_by_key(|moderation_case| std::cmp::Reverse(moderation_case.created_at));
         cases.truncate(usize::from(limit));
         cases
     }
