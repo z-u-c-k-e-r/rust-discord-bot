@@ -1,0 +1,87 @@
+name: Finalize reproducible foundation
+
+on:
+  push:
+    branches:
+      - feat/lua-platform-foundation
+    paths:
+      - .github/workflows/finalize-foundation.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-lua-platform-foundation
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out canonical foundation branch
+        uses: actions/checkout@v7
+        with:
+          ref: feat/lua-platform-foundation
+          fetch-depth: 0
+
+      - name: Generate and enforce the application lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.1 --profile minimal --no-self-update
+          rustup override set 1.98.1
+          cargo generate-lockfile
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          ci_path = Path('.github/workflows/ci.yml')
+          ci = ci_path.read_text(encoding='utf-8')
+          old_ci = '''      - name: Resolve the pinned dependency graph
+                run: cargo generate-lockfile
+          '''
+          new_ci = '''      - name: Verify committed dependency lock
+                run: cargo metadata --locked --format-version 1 > /dev/null
+          '''
+          if old_ci not in ci:
+              raise SystemExit('expected CI lockfile block not found')
+          ci_path.write_text(ci.replace(old_ci, new_ci), encoding='utf-8')
+
+          docker_path = Path('Dockerfile')
+          docker = docker_path.read_text(encoding='utf-8')
+          docker = docker.replace(
+              'COPY Cargo.toml rust-toolchain.toml ./',
+              'COPY Cargo.toml Cargo.lock rust-toolchain.toml ./',
+          )
+          docker = docker.replace(
+              'RUN cargo generate-lockfile \\\n              && cargo build --locked --release',
+              'RUN cargo build --locked --release',
+          )
+          if 'cargo generate-lockfile' in docker:
+              raise SystemExit('Dockerfile still generates a lockfile')
+          if 'COPY Cargo.toml Cargo.lock rust-toolchain.toml ./' not in docker:
+              raise SystemExit('Dockerfile does not copy Cargo.lock')
+          docker_path.write_text(docker, encoding='utf-8')
+          PY
+
+          rm -f .github/modernize-stack.trigger
+          rm -f .github/workflows/modernize-stack.yml
+          rm -f .github/workflows/refresh-current-stable.yml
+          rm -f .github/workflows/finalize-foundation.yml
+
+          test -s Cargo.lock
+          cargo metadata --locked --format-version 1 > /dev/null
+          git diff --check
+
+      - name: Commit reproducible foundation state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "build: commit dependency lock and remove bootstrap writers"
+          git push origin HEAD:feat/lua-platform-foundation
