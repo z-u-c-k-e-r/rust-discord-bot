@@ -105,7 +105,12 @@ jobs:
         run: node --check web/static/app.js
 
       - name: Validate Compose configuration
-        run: docker compose -f compose.yaml config --quiet
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          trap 'rm -f .env' EXIT
+          docker compose -f compose.yaml config --quiet
 
       - name: Build production image
         run: docker build --tag zuckerbot:tickets-ci .
@@ -115,6 +120,7 @@ jobs:
           rm -f .github/ticket-integration.trigger
           rm -f .github/scripts/apply_ticket_integration.py
           rm -f .github/scripts/fix_ticket_clippy.py
+          rm -f .github/workflows/apply-tickets.yml
 
       - name: Commit validated ticket implementation
         run: |
