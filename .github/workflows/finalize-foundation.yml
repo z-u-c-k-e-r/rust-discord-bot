@@ -36,34 +36,39 @@ jobs:
           cargo generate-lockfile
 
           python3 <<'PY'
+          import re
           from pathlib import Path
 
           ci_path = Path('.github/workflows/ci.yml')
           ci = ci_path.read_text(encoding='utf-8')
-          old_ci = '''      - name: Resolve the pinned dependency graph
-                run: cargo generate-lockfile
-          '''
-          new_ci = '''      - name: Verify committed dependency lock
-                run: cargo metadata --locked --format-version 1 > /dev/null
-          '''
-          if old_ci not in ci:
-              raise SystemExit('expected CI lockfile block not found')
-          ci_path.write_text(ci.replace(old_ci, new_ci), encoding='utf-8')
+          ci, replacements = re.subn(
+              r'(?m)^      - name: Resolve the pinned dependency graph\n        run: cargo generate-lockfile$',
+              '      - name: Verify committed dependency lock\n'
+              '        run: cargo metadata --locked --format-version 1 > /dev/null',
+              ci,
+          )
+          if replacements != 1:
+              raise SystemExit(f'expected one CI lockfile block, replaced {replacements}')
+          ci_path.write_text(ci, encoding='utf-8')
 
           docker_path = Path('Dockerfile')
           docker = docker_path.read_text(encoding='utf-8')
-          docker = docker.replace(
-              'COPY Cargo.toml rust-toolchain.toml ./',
+          docker, copy_replacements = re.subn(
+              r'^COPY Cargo\.toml rust-toolchain\.toml \./$',
               'COPY Cargo.toml Cargo.lock rust-toolchain.toml ./',
+              docker,
+              flags=re.MULTILINE,
           )
-          docker = docker.replace(
-              'RUN cargo generate-lockfile \\\n              && cargo build --locked --release',
+          docker, build_replacements = re.subn(
+              r'RUN cargo generate-lockfile \\\n\s*&& cargo build --locked --release',
               'RUN cargo build --locked --release',
+              docker,
           )
-          if 'cargo generate-lockfile' in docker:
-              raise SystemExit('Dockerfile still generates a lockfile')
-          if 'COPY Cargo.toml Cargo.lock rust-toolchain.toml ./' not in docker:
-              raise SystemExit('Dockerfile does not copy Cargo.lock')
+          if copy_replacements != 1 or build_replacements != 1:
+              raise SystemExit(
+                  'unexpected Dockerfile replacements: '
+                  f'copy={copy_replacements}, build={build_replacements}'
+              )
           docker_path.write_text(docker, encoding='utf-8')
           PY
 
@@ -74,6 +79,8 @@ jobs:
 
           test -s Cargo.lock
           cargo metadata --locked --format-version 1 > /dev/null
+          ! grep -R "contents: write" .github/workflows
+          ! grep -R "cargo generate-lockfile" .github/workflows/ci.yml Dockerfile
           git diff --check
 
       - name: Commit reproducible foundation state
