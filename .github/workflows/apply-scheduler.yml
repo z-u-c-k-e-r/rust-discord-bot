@@ -49,6 +49,7 @@ jobs:
           python .github/scripts/apply_scheduler_integration.py
           python .github/scripts/fix_scheduler_sql.py
           python .github/scripts/fix_scheduler_enum_sizes.py
+          python .github/scripts/fix_scheduler_lua_keyword.py
 
       - name: Format source
         run: cargo fmt --all
@@ -71,6 +72,7 @@ jobs:
           rm -f .github/scripts/apply_scheduler_integration.py
           rm -f .github/scripts/fix_scheduler_sql.py
           rm -f .github/scripts/fix_scheduler_enum_sizes.py
+          rm -f .github/scripts/fix_scheduler_lua_keyword.py
           rm -f .github/workflows/apply-scheduler.yml
 
       - name: Commit validated scheduler implementation
