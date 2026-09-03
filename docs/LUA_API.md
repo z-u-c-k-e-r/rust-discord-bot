@@ -253,6 +253,83 @@ Required permission: Manage Roles. The target role must be below the bot and inv
 
 `amount` must be between 1 and 100. Required permission: Manage Messages.
 
+### Moderation cases and warnings
+
+Lua can create a durable moderation case without receiving database access:
+
+```lua
+{
+    type = "create_moderation_case",
+    target_user_id = "123",
+    case_type = "warning",
+    reason = "Repeated spam",
+    points = 2,
+    expires_in_seconds = 7776000,
+    metadata = {
+        source = "manual_warning",
+    },
+    escalation_rules = {
+        {
+            threshold_points = 3,
+            action = "timeout",
+            duration_seconds = 3600,
+        },
+        {
+            threshold_points = 7,
+            action = "kick",
+        },
+        {
+            threshold_points = 10,
+            action = "ban",
+            delete_message_days = 1,
+        },
+    },
+}
+```
+
+The Rust capability broker:
+
+- validates the target and moderator hierarchy;
+- stores the case in PostgreSQL or the development memory store;
+- counts points from open, non-expired cases;
+- applies the highest matching Lua-declared escalation rule;
+- checks the moderator and bot permission required by that escalation;
+- records case creation and escalation in the audit log.
+
+Limits: case type 1–32 lowercase ASCII characters, reason 1–512 characters,
+0–1000 points, expiry up to 365 days, up to 32 metadata keys/16 KiB and up to
+10 strictly increasing escalation rules.
+
+Read cases:
+
+```lua
+{
+    type = "list_moderation_cases",
+    target_user_id = "123",
+    limit = 10,
+    include_resolved = false,
+}
+```
+
+Resolve an open case:
+
+```lua
+{
+    type = "resolve_moderation_case",
+    case_id = 42,
+    resolution = "Appeal accepted",
+}
+```
+
+All three actions require Moderate Members for interactive commands. Automated
+event modules can create cases through the same broker; the bot identity is then
+stored as the moderator. Dashboard endpoints expose the same storage lifecycle:
+
+```text
+GET /api/guilds/{guild_id}/moderation/users/{target_user_id}/cases
+PUT /api/guilds/{guild_id}/moderation/cases/{case_id}/resolve
+```
+
 ### Music
 
 ```lua

@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::lua::LuaModuleManifest;
+use crate::{lua::LuaModuleManifest, storage::ModerationCase};
 
 use super::{
     WebState,
@@ -94,6 +94,19 @@ pub struct UpdateModuleRequest {
     enabled: bool,
     #[serde(default)]
     config: Value,
+}
+
+#[derive(Deserialize)]
+pub struct ModerationCasesQuery {
+    #[serde(default)]
+    include_resolved: bool,
+    #[serde(default = "default_moderation_case_limit")]
+    limit: u8,
+}
+
+#[derive(Deserialize)]
+pub struct ResolveModerationCaseRequest {
+    resolution: String,
 }
 
 pub async fn health() -> Json<Health> {
@@ -211,4 +224,96 @@ pub async fn update_guild_module(
         configured: true,
         updated_at: Some(settings.updated_at),
     }))
+}
+pub async fn moderation_cases(
+    State(state): State<WebState>,
+    Path((guild_id, target_user_id)): Path<(String, String)>,
+    Query(query): Query<ModerationCasesQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ModerationCase>>, ApiError> {
+    let (_, session) = authenticate(&state, &headers)?;
+    ensure_guild_access(&session, &guild_id)?;
+    validate_discord_id(&target_user_id)?;
+    if !(1..=25).contains(&query.limit) {
+        return Err(ApiError::bad_request(
+            "Limit spraw musi mieścić się w zakresie 1–25.",
+        ));
+    }
+
+    let cases = state
+        .app
+        .storage
+        .list_moderation_cases(
+            &guild_id,
+            &target_user_id,
+            query.include_resolved,
+            query.limit,
+        )
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    Ok(Json(cases))
+}
+
+pub async fn resolve_moderation_case(
+    State(state): State<WebState>,
+    Path((guild_id, case_id)): Path<(String, i64)>,
+    headers: HeaderMap,
+    Json(payload): Json<ResolveModerationCaseRequest>,
+) -> Result<Json<ModerationCase>, ApiError> {
+    let (_, session) = authenticate(&state, &headers)?;
+    ensure_guild_access(&session, &guild_id)?;
+    verify_csrf(&headers, &session)?;
+    if case_id <= 0 {
+        return Err(ApiError::bad_request(
+            "Identyfikator sprawy musi być większy od zera.",
+        ));
+    }
+    let resolution_length = payload.resolution.chars().count();
+    if payload.resolution.trim().is_empty() || resolution_length > 512 {
+        return Err(ApiError::bad_request(
+            "Rozstrzygnięcie musi zawierać od 1 do 512 znaków.",
+        ));
+    }
+
+    let moderation_case = state
+        .app
+        .storage
+        .resolve_moderation_case(&guild_id, case_id, &session.user.id, &payload.resolution)
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?
+        .ok_or_else(|| ApiError::not_found("Sprawa nie istnieje albo została już zamknięta."))?;
+
+    state
+        .app
+        .storage
+        .record_audit(
+            Some(&guild_id),
+            Some(&session.user.id),
+            "dashboard",
+            "moderation_case_resolved",
+            json!({
+                "case_id": moderation_case.id,
+                "target_user_id": moderation_case.target_user_id,
+            }),
+        )
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+
+    Ok(Json(moderation_case))
+}
+
+fn validate_discord_id(value: &str) -> Result<(), ApiError> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Nieprawidłowy identyfikator Discorda."))?;
+    if parsed == 0 {
+        return Err(ApiError::bad_request(
+            "Identyfikator Discorda nie może być zerem.",
+        ));
+    }
+    Ok(())
+}
+
+const fn default_moderation_case_limit() -> u8 {
+    10
 }

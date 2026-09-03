@@ -234,11 +234,53 @@ pub enum LuaAction {
         #[serde(default)]
         query: Option<String>,
     },
+    CreateModerationCase {
+        target_user_id: String,
+        case_type: String,
+        reason: String,
+        #[serde(default)]
+        points: u16,
+        #[serde(default)]
+        expires_in_seconds: Option<u64>,
+        #[serde(default)]
+        metadata: BTreeMap<String, Value>,
+        #[serde(default)]
+        escalation_rules: Vec<ModerationEscalationRule>,
+    },
+    ListModerationCases {
+        target_user_id: String,
+        #[serde(default = "default_case_limit")]
+        limit: u8,
+        #[serde(default)]
+        include_resolved: bool,
+    },
+    ResolveModerationCase {
+        case_id: i64,
+        resolution: String,
+    },
     Audit {
         event: String,
         #[serde(default)]
         data: BTreeMap<String, Value>,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ModerationEscalationRule {
+    pub threshold_points: u16,
+    pub action: ModerationEscalationAction,
+    #[serde(default)]
+    pub duration_seconds: Option<u64>,
+    #[serde(default)]
+    pub delete_message_days: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModerationEscalationAction {
+    Timeout,
+    Kick,
+    Ban,
 }
 
 impl LuaAction {
@@ -305,6 +347,110 @@ impl LuaAction {
                 }
                 Ok(())
             }
+            Self::CreateModerationCase {
+                target_user_id,
+                case_type,
+                reason,
+                points,
+                expires_in_seconds,
+                metadata,
+                escalation_rules,
+            } => {
+                validate_snowflake(target_user_id)?;
+                validate_case_type(case_type)?;
+                validate_required_text(reason, "moderation case reason", 512)?;
+                if *points > 1_000 {
+                    return Err("moderation case points cannot exceed 1000".to_owned());
+                }
+                if expires_in_seconds.is_some_and(|seconds| seconds == 0 || seconds > 31_536_000) {
+                    return Err(
+                        "moderation case expiry must be between 1 second and 365 days".to_owned(),
+                    );
+                }
+                if metadata.len() > 32 {
+                    return Err("moderation case metadata cannot exceed 32 keys".to_owned());
+                }
+                let metadata_size = serde_json::to_vec(metadata)
+                    .map_err(|error| format!("invalid moderation case metadata: {error}"))?
+                    .len();
+                if metadata_size > 16 * 1024 {
+                    return Err("moderation case metadata cannot exceed 16 KiB".to_owned());
+                }
+                if escalation_rules.len() > 10 {
+                    return Err("moderation escalation cannot exceed 10 rules".to_owned());
+                }
+                if !escalation_rules.is_empty() && *points == 0 {
+                    return Err("moderation escalation requires a positive point value".to_owned());
+                }
+
+                let mut previous_threshold = 0;
+                for rule in escalation_rules {
+                    if rule.threshold_points == 0 || rule.threshold_points > 1_000 {
+                        return Err(
+                            "escalation thresholds must be between 1 and 1000 points".to_owned()
+                        );
+                    }
+                    if rule.threshold_points <= previous_threshold {
+                        return Err("escalation thresholds must be strictly increasing".to_owned());
+                    }
+                    previous_threshold = rule.threshold_points;
+
+                    match rule.action {
+                        ModerationEscalationAction::Timeout => {
+                            if rule
+                                .duration_seconds
+                                .is_none_or(|seconds| seconds == 0 || seconds > 2_419_200)
+                            {
+                                return Err(
+                                    "timeout escalation requires 1 to 2419200 seconds".to_owned()
+                                );
+                            }
+                            if rule.delete_message_days != 0 {
+                                return Err(
+                                    "timeout escalation cannot delete message history".to_owned()
+                                );
+                            }
+                        }
+                        ModerationEscalationAction::Kick => {
+                            if rule.duration_seconds.is_some() || rule.delete_message_days != 0 {
+                                return Err(
+                                    "kick escalation cannot define duration or message deletion"
+                                        .to_owned(),
+                                );
+                            }
+                        }
+                        ModerationEscalationAction::Ban => {
+                            if rule.duration_seconds.is_some() || rule.delete_message_days > 7 {
+                                return Err(
+                                    "ban escalation accepts only 0 to 7 delete_message_days"
+                                        .to_owned(),
+                                );
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Self::ListModerationCases {
+                target_user_id,
+                limit,
+                ..
+            } => {
+                validate_snowflake(target_user_id)?;
+                if !(1..=25).contains(limit) {
+                    return Err("moderation case list limit must be between 1 and 25".to_owned());
+                }
+                Ok(())
+            }
+            Self::ResolveModerationCase {
+                case_id,
+                resolution,
+            } => {
+                if *case_id <= 0 {
+                    return Err("moderation case id must be greater than zero".to_owned());
+                }
+                validate_required_text(resolution, "moderation case resolution", 512)
+            }
             Self::Music { query, operation } => {
                 if matches!(operation, MusicOperation::Play)
                     && query.as_deref().is_none_or(str::is_empty)
@@ -360,6 +506,30 @@ fn validate_reason(reason: &Option<String>) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_case_type(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 32
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_-".contains(&byte))
+    {
+        return Err(
+            "moderation case type must contain 1 to 32 lowercase ASCII characters".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_required_text(value: &str, field: &str, max_characters: usize) -> Result<(), String> {
+    let length = value.chars().count();
+    if value.trim().is_empty() || length > max_characters {
+        return Err(format!(
+            "{field} must contain 1 to {max_characters} characters"
+        ));
+    }
+    Ok(())
+}
+
 fn validate_snowflake(value: &str) -> Result<(), String> {
     let parsed = value
         .parse::<u64>()
@@ -372,6 +542,10 @@ fn validate_snowflake(value: &str) -> Result<(), String> {
 
 const fn default_true() -> bool {
     true
+}
+
+const fn default_case_limit() -> u8 {
+    10
 }
 
 fn empty_object() -> Value {

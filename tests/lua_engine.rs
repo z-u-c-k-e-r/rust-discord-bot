@@ -53,6 +53,48 @@ async fn bundled_modules_load_and_ping_executes() {
 }
 
 #[tokio::test]
+async fn moderation_warning_returns_a_persistent_case_with_escalation_rules() {
+    let scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts");
+    let engine = LuaEngine::load(scripts, limits()).expect("bundled scripts should load");
+    let mut command_context = context();
+    command_context.options = json!({
+        "user": "100000000000000010",
+        "reason": "Repeated spam",
+        "points": 2,
+        "expires_days": 30
+    });
+    command_context.config = json!({
+        "timeout_at_points": 3,
+        "escalation_timeout_seconds": 3600,
+        "kick_at_points": 7,
+        "ban_at_points": 10,
+        "ban_delete_message_days": 1
+    });
+
+    let actions = engine
+        .execute_command("moderation", "warn", command_context)
+        .await
+        .expect("warning should execute");
+
+    assert!(actions.iter().any(|action| {
+        matches!(
+            action,
+            LuaAction::CreateModerationCase {
+                target_user_id,
+                case_type,
+                points,
+                expires_in_seconds: Some(2_592_000),
+                escalation_rules,
+                ..
+            } if target_user_id == "100000000000000010"
+                && case_type == "warning"
+                && *points == 2
+                && escalation_rules.len() == 3
+        )
+    }));
+}
+
+#[tokio::test]
 async fn infinite_loop_hits_instruction_limit() {
     let directory = TempDir::new().expect("temporary directory");
     std::fs::write(

@@ -44,6 +44,14 @@ pub async fn serve(app: AppState) -> Result<()> {
             "/api/guilds/{guild_id}/modules/{module_id}",
             put(routes::update_guild_module),
         )
+        .route(
+            "/api/guilds/{guild_id}/moderation/users/{target_user_id}/cases",
+            get(routes::moderation_cases),
+        )
+        .route(
+            "/api/guilds/{guild_id}/moderation/cases/{case_id}/resolve",
+            put(routes::resolve_moderation_case),
+        )
         .with_state(state);
 
     let listener = TcpListener::bind(bind).await?;

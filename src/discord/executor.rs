@@ -14,7 +14,10 @@ use serenity::{
     client::Context,
 };
 
-use crate::{AppState, lua::LuaAction};
+use crate::{
+    AppState,
+    lua::{LuaAction, ModerationEscalationAction},
+};
 
 use super::music;
 
@@ -188,7 +191,10 @@ async fn execute_action(
                 "wywołujący nie ma wymaganych uprawnień: {required:?}"
             ));
         }
-        if origin.enforce_actor_permissions && !has_permission(origin.app_permissions, required) {
+        if origin.enforce_actor_permissions
+            && requires_bot_permission(action)
+            && !has_permission(origin.app_permissions, required)
+        {
             return Err(anyhow!("bot nie ma wymaganych uprawnień: {required:?}"));
         }
     }
@@ -374,6 +380,243 @@ async fn execute_action(
             .await?;
             Ok(None)
         }
+        LuaAction::CreateModerationCase {
+            target_user_id,
+            case_type,
+            reason,
+            points,
+            expires_in_seconds,
+            metadata,
+            escalation_rules,
+        } => {
+            let guild_id = require_guild(origin)?;
+            let target_id = UserId::new(parse_snowflake(target_user_id)?);
+            let hierarchy_actor = if origin.enforce_actor_permissions {
+                origin.actor_id
+            } else {
+                None
+            };
+            ensure_member_hierarchy(ctx, guild_id, hierarchy_actor, target_id).await?;
+
+            let moderator_id = if origin.enforce_actor_permissions {
+                origin
+                    .actor_id
+                    .ok_or_else(|| anyhow!("moderation cases require a moderator context"))?
+            } else {
+                ctx.cache.current_user().id
+            };
+            let expires_at = match expires_in_seconds {
+                Some(seconds) => Some(
+                    Utc::now()
+                        + Duration::seconds(
+                            i64::try_from(*seconds)
+                                .context("moderation case expiry exceeds supported range")?,
+                        ),
+                ),
+                None => None,
+            };
+            let guild_id_string = guild_id.get().to_string();
+            let moderator_id_string = moderator_id.get().to_string();
+            let moderation_case = state
+                .storage
+                .create_moderation_case(
+                    &guild_id_string,
+                    target_user_id,
+                    &moderator_id_string,
+                    case_type,
+                    reason,
+                    expires_at,
+                    serde_json::to_value(metadata)?,
+                    i32::from(*points),
+                )
+                .await?;
+            let active_points = state
+                .storage
+                .active_moderation_points(&guild_id_string, target_user_id)
+                .await?;
+
+            audit_action(
+                state,
+                origin,
+                module_id,
+                "moderation_case_created",
+                serde_json::json!({
+                    "case_id": moderation_case.id,
+                    "target_user_id": target_user_id,
+                    "case_type": case_type,
+                    "points": points,
+                    "active_points": active_points,
+                }),
+            )
+            .await?;
+
+            let escalation = escalation_rules
+                .iter()
+                .rev()
+                .find(|rule| i64::from(rule.threshold_points) <= active_points);
+            let mut escalation_status = None;
+            if let Some(rule) = escalation {
+                let required = match rule.action {
+                    ModerationEscalationAction::Timeout => Permissions::MODERATE_MEMBERS,
+                    ModerationEscalationAction::Kick => Permissions::KICK_MEMBERS,
+                    ModerationEscalationAction::Ban => Permissions::BAN_MEMBERS,
+                };
+                if origin.enforce_actor_permissions
+                    && !has_permission(origin.actor_permissions, required)
+                {
+                    return Err(anyhow!(
+                        "wywołujący nie ma uprawnień wymaganych przez automatyczną eskalację: {required:?}"
+                    ));
+                }
+                if origin.enforce_actor_permissions
+                    && !has_permission(origin.app_permissions, required)
+                {
+                    return Err(anyhow!(
+                        "bot nie ma uprawnień wymaganych przez automatyczną eskalację: {required:?}"
+                    ));
+                }
+
+                match rule.action {
+                    ModerationEscalationAction::Timeout => {
+                        let seconds = rule
+                            .duration_seconds
+                            .ok_or_else(|| anyhow!("timeout escalation has no duration"))?;
+                        let until = (Utc::now()
+                            + Duration::seconds(
+                                i64::try_from(seconds)
+                                    .context("timeout escalation exceeds supported range")?,
+                            ))
+                        .to_rfc3339();
+                        guild_id
+                            .edit_member(
+                                &ctx.http,
+                                target_id,
+                                EditMember::new().disable_communication_until(until),
+                            )
+                            .await?;
+                        escalation_status = Some(format!("timeout na {seconds} s"));
+                    }
+                    ModerationEscalationAction::Kick => {
+                        guild_id
+                            .kick_with_reason(
+                                &ctx.http,
+                                target_id,
+                                "Automatyczna eskalacja punktów ZuckerBot",
+                            )
+                            .await?;
+                        escalation_status = Some("wyrzucenie z serwera".to_owned());
+                    }
+                    ModerationEscalationAction::Ban => {
+                        guild_id
+                            .ban_with_reason(
+                                &ctx.http,
+                                target_id,
+                                rule.delete_message_days,
+                                "Automatyczna eskalacja punktów ZuckerBot",
+                            )
+                            .await?;
+                        escalation_status = Some("ban".to_owned());
+                    }
+                }
+
+                audit_action(
+                    state,
+                    origin,
+                    module_id,
+                    "moderation_case_escalated",
+                    serde_json::json!({
+                        "case_id": moderation_case.id,
+                        "target_user_id": target_user_id,
+                        "active_points": active_points,
+                        "threshold_points": rule.threshold_points,
+                        "action": rule.action,
+                    }),
+                )
+                .await?;
+            }
+
+            let escalation_status = escalation_status
+                .map(|status| format!(" Automatyczna eskalacja: {status}."))
+                .unwrap_or_default();
+            Ok(Some(format!(
+                "Utworzono sprawę #{} typu `{}`. Aktywne punkty: {}.{}",
+                moderation_case.id, case_type, active_points, escalation_status
+            )))
+        }
+        LuaAction::ListModerationCases {
+            target_user_id,
+            limit,
+            include_resolved,
+        } => {
+            let guild_id = require_guild(origin)?;
+            let cases = state
+                .storage
+                .list_moderation_cases(
+                    &guild_id.get().to_string(),
+                    target_user_id,
+                    *include_resolved,
+                    *limit,
+                )
+                .await?;
+            if cases.is_empty() {
+                return Ok(Some(
+                    "Nie znaleziono spraw dla tego użytkownika.".to_owned(),
+                ));
+            }
+
+            let mut output = format!("Sprawy użytkownika `{target_user_id}`:");
+            for moderation_case in cases {
+                let reason = truncate_status(
+                    moderation_case.reason.as_deref().unwrap_or("Brak powodu"),
+                    110,
+                );
+                output.push_str(&format!(
+                    "\n#{} [{}] `{}` | {} pkt | {} | {}",
+                    moderation_case.id,
+                    moderation_case.status,
+                    moderation_case.action,
+                    moderation_case.points,
+                    moderation_case.created_at.format("%Y-%m-%d %H:%M UTC"),
+                    reason
+                ));
+            }
+            Ok(Some(truncate_status(&output, 1_900)))
+        }
+        LuaAction::ResolveModerationCase {
+            case_id,
+            resolution,
+        } => {
+            let guild_id = require_guild(origin)?;
+            let actor_id = origin
+                .actor_id
+                .ok_or_else(|| anyhow!("resolving a case requires a moderator context"))?;
+            let moderation_case = state
+                .storage
+                .resolve_moderation_case(
+                    &guild_id.get().to_string(),
+                    *case_id,
+                    &actor_id.get().to_string(),
+                    resolution,
+                )
+                .await?
+                .ok_or_else(|| anyhow!("sprawa nie istnieje albo została już zamknięta"))?;
+            audit_action(
+                state,
+                origin,
+                module_id,
+                "moderation_case_resolved",
+                serde_json::json!({
+                    "case_id": moderation_case.id,
+                    "target_user_id": moderation_case.target_user_id,
+                    "resolution": resolution,
+                }),
+            )
+            .await?;
+            Ok(Some(format!(
+                "Sprawa #{} została zamknięta.",
+                moderation_case.id
+            )))
+        }
         LuaAction::Music { operation, query } => {
             let guild_id = require_guild(origin)?;
             let actor_id = origin
@@ -432,6 +675,9 @@ fn required_permission(action: &LuaAction) -> Option<Permissions> {
         LuaAction::KickMember { .. } => Some(Permissions::KICK_MEMBERS),
         LuaAction::BanMember { .. } => Some(Permissions::BAN_MEMBERS),
         LuaAction::AddRole { .. } | LuaAction::RemoveRole { .. } => Some(Permissions::MANAGE_ROLES),
+        LuaAction::CreateModerationCase { .. }
+        | LuaAction::ListModerationCases { .. }
+        | LuaAction::ResolveModerationCase { .. } => Some(Permissions::MODERATE_MEMBERS),
         _ => None,
     }
 }
@@ -461,6 +707,28 @@ fn parse_snowflake(value: &str) -> Result<u64> {
         return Err(anyhow!("identyfikator Discorda nie może być zerem"));
     }
     Ok(parsed)
+}
+
+fn requires_bot_permission(action: &LuaAction) -> bool {
+    !matches!(
+        action,
+        LuaAction::CreateModerationCase { .. }
+            | LuaAction::ListModerationCases { .. }
+            | LuaAction::ResolveModerationCase { .. }
+    )
+}
+
+fn truncate_status(value: &str, max_characters: usize) -> String {
+    if value.chars().count() <= max_characters {
+        return value.to_owned();
+    }
+
+    let mut output = value
+        .chars()
+        .take(max_characters.saturating_sub(1))
+        .collect::<String>();
+    output.push('…');
+    output
 }
 
 async fn ensure_member_hierarchy(
