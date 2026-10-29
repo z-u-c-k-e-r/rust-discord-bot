@@ -11,6 +11,7 @@ pub struct Metrics {
     pub scheduler_jobs_delivered_total: AtomicU64,
     pub scheduler_jobs_failed_total: AtomicU64,
     pub dashboard_requests_total: AtomicU64,
+    pub rate_limit_throttled_total: AtomicU64,
 }
 
 impl Default for Metrics {
@@ -24,6 +25,7 @@ impl Default for Metrics {
             scheduler_jobs_delivered_total: AtomicU64::new(0),
             scheduler_jobs_failed_total: AtomicU64::new(0),
             dashboard_requests_total: AtomicU64::new(0),
+            rate_limit_throttled_total: AtomicU64::new(0),
         }
     }
 }
@@ -64,6 +66,9 @@ impl Metrics {
              # HELP zuckerbot_dashboard_requests_total Total number of HTTP requests processed by dashboard\n\
              # TYPE zuckerbot_dashboard_requests_total counter\n\
              zuckerbot_dashboard_requests_total {}\n\
+             # HELP zuckerbot_rate_limit_throttled_total Total number of operations rejected by abuse prevention / rate limiter\n\
+             # TYPE zuckerbot_rate_limit_throttled_total counter\n\
+             zuckerbot_rate_limit_throttled_total {}\n\
              # HELP zuckerbot_active_sessions Current number of active dashboard sessions\n\
              # TYPE zuckerbot_active_sessions gauge\n\
              zuckerbot_active_sessions {}\n",
@@ -75,6 +80,7 @@ impl Metrics {
             self.scheduler_jobs_delivered_total.load(Ordering::Relaxed),
             self.scheduler_jobs_failed_total.load(Ordering::Relaxed),
             self.dashboard_requests_total.load(Ordering::Relaxed),
+            self.rate_limit_throttled_total.load(Ordering::Relaxed),
             active_sessions,
         )
     }

@@ -248,6 +248,23 @@ pub async fn update_guild_module(
     ensure_guild_access(&state, &session, &guild_id).await?;
     verify_csrf(&headers, &session)?;
 
+    let decision = state.app.rate_limiter.check_action(
+        "admin:update_module",
+        &session.user.id,
+        Some(&guild_id),
+    );
+    if !decision.allowed {
+        state
+            .app
+            .metrics
+            .rate_limit_throttled_total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return Err(ApiError::too_many_requests(format!(
+            "Zbyt częste zmiany konfiguracji modułów. Odczekaj {} s.",
+            decision.reset_after.as_secs().max(1)
+        )));
+    }
+
     let manifest = state
         .app
         .scripts

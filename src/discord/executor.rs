@@ -175,6 +175,25 @@ pub async fn execute_event_actions(
     Ok(())
 }
 
+fn action_rate_limit_scope(action: &LuaAction) -> Option<&'static str> {
+    match action {
+        LuaAction::Ticket {
+            operation: crate::lua::TicketOperation::Open { .. },
+        } => Some("ticket_create"),
+        LuaAction::Scheduler {
+            operation: crate::lua::SchedulerOperation::Create { .. },
+        } => Some("scheduler_create"),
+        LuaAction::Music {
+            operation: crate::lua::MusicOperation::Play,
+            ..
+        } => Some("music_play"),
+        LuaAction::BanMember { .. }
+        | LuaAction::KickMember { .. }
+        | LuaAction::DeleteMessage { .. } => Some("destructive_admin"),
+        _ => None,
+    }
+}
+
 async fn execute_action(
     ctx: &Context,
     state: &AppState,
@@ -182,6 +201,27 @@ async fn execute_action(
     origin: &ActionOrigin,
     action: &LuaAction,
 ) -> Result<Option<String>> {
+    if let Some(scope) = action_rate_limit_scope(action)
+        && let Some(actor_id) = origin.actor_id
+    {
+        let guild_id_str = origin.guild_id.map(|g| g.get().to_string());
+        let decision = state.rate_limiter.check_action(
+            scope,
+            &actor_id.get().to_string(),
+            guild_id_str.as_deref(),
+        );
+        if !decision.allowed {
+            state
+                .metrics
+                .rate_limit_throttled_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(anyhow!(
+                "Przekroczono limit dla operacji `{scope}` (odczekaj {} s)",
+                decision.reset_after.as_secs().max(1)
+            ));
+        }
+    }
+
     if let Some(required) = required_permission(action) {
         if origin.enforce_actor_permissions && !has_permission(origin.actor_permissions, required) {
             return Err(anyhow!(

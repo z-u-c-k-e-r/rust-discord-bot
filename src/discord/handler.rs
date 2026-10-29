@@ -186,6 +186,31 @@ async fn handle_command(
         return Ok(());
     }
 
+    let user_id = command.user.id.get().to_string();
+    let guild_id_str = command.guild_id.map(|id| id.get().to_string());
+    let rate_decision =
+        state
+            .rate_limiter
+            .check_command(&command.data.name, &user_id, guild_id_str.as_deref());
+
+    if !rate_decision.allowed {
+        state
+            .metrics
+            .rate_limit_throttled_total
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let retry_secs = rate_decision.reset_after.as_secs().max(1);
+        respond_ephemeral(
+            ctx,
+            command,
+            &format!(
+                "Osiągnięto limit wywołań komendy `/{}`. Spróbuj ponownie za {} s.",
+                command.data.name, retry_secs
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
     let member_roles = command
         .member
         .as_ref()

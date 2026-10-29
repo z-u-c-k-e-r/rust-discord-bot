@@ -22,6 +22,7 @@ pub struct AppState {
     pub media_http_client: reqwest_songbird::Client,
     pub metrics: Arc<crate::metrics::Metrics>,
     pub sessions: SessionStore,
+    pub rate_limiter: Arc<crate::rate_limit::RateLimiter>,
 }
 
 impl AppState {
@@ -64,6 +65,7 @@ impl AppState {
             .build()?;
 
         let metrics = Arc::new(crate::metrics::Metrics::new());
+        let rate_limiter = Arc::new(crate::rate_limit::RateLimiter::new());
         Ok(Self {
             config,
             scripts,
@@ -74,6 +76,7 @@ impl AppState {
             media_http_client,
             metrics,
             sessions,
+            rate_limiter,
         })
     }
 }
