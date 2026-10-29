@@ -16,9 +16,10 @@ use crate::AppState;
 
 #[derive(Clone)]
 pub struct WebState {
-    app: AppState,
-    sessions: Arc<DashMap<String, auth::Session>>,
-    oauth_states: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
+    pub app: AppState,
+    pub sessions: Arc<DashMap<String, auth::Session>>,
+    pub oauth_states: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
+    pub login_rate_limiter: Arc<auth::LoginRateLimiter>,
 }
 
 pub async fn serve(app: AppState) -> Result<()> {
@@ -27,7 +28,24 @@ pub async fn serve(app: AppState) -> Result<()> {
         app,
         sessions: Arc::new(DashMap::new()),
         oauth_states: Arc::new(DashMap::new()),
+        login_rate_limiter: Arc::new(auth::LoginRateLimiter::new()),
     };
+
+    let cleanup_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let (states, sessions) = auth::cleanup_stale_records(&cleanup_state);
+            if states > 0 || sessions > 0 {
+                tracing::debug!(
+                    states,
+                    sessions,
+                    "pruned stale OAuth states and expired sessions"
+                );
+            }
+        }
+    });
 
     let router = Router::new()
         .route("/", get(static_files::index))

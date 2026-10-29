@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+
 use axum::{
     Json,
     extract::{Query, State},
@@ -7,7 +9,8 @@ use axum::{
     },
     response::{IntoResponse, Redirect, Response},
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use url::Url;
 use uuid::Uuid;
@@ -21,6 +24,67 @@ const DISCORD_USER_URL: &str = "https://discord.com/api/v10/users/@me";
 const DISCORD_GUILDS_URL: &str = "https://discord.com/api/v10/users/@me/guilds";
 const ADMINISTRATOR: u64 = 1 << 3;
 const MANAGE_GUILD: u64 = 1 << 5;
+
+pub const MAX_PENDING_OAUTH_STATES: usize = 1_000;
+pub const MAX_LOGIN_REQUESTS_PER_MINUTE_PER_IP: u32 = 10;
+pub const MAX_GLOBAL_LOGIN_REQUESTS_PER_MINUTE: u32 = 60;
+
+#[derive(Debug, Default)]
+pub struct LoginRateLimiter {
+    per_ip: DashMap<String, (DateTime<Utc>, u32)>,
+    global: AtomicU32,
+    global_window_start: AtomicI64,
+}
+
+impl LoginRateLimiter {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            per_ip: DashMap::new(),
+            global: AtomicU32::new(0),
+            global_window_start: AtomicI64::new(Utc::now().timestamp()),
+        }
+    }
+
+    pub fn check_and_record(&self, ip: &str) -> Result<(), ApiError> {
+        let now = Utc::now();
+        let now_ts = now.timestamp();
+
+        let window_start = self.global_window_start.load(Ordering::Relaxed);
+        if now_ts.saturating_sub(window_start) >= 60 {
+            self.global_window_start.store(now_ts, Ordering::Relaxed);
+            self.global.store(1, Ordering::Relaxed);
+        } else {
+            let count = self.global.fetch_add(1, Ordering::Relaxed);
+            if count >= MAX_GLOBAL_LOGIN_REQUESTS_PER_MINUTE {
+                return Err(ApiError::too_many_requests(
+                    "Zbyt wiele prób logowania na serwerze. Spróbuj ponownie za chwilę.",
+                ));
+            }
+        }
+
+        let mut entry = self.per_ip.entry(ip.to_owned()).or_insert_with(|| (now, 0));
+        let (ip_window_start, count) = entry.value_mut();
+        if now - *ip_window_start >= Duration::seconds(60) {
+            *ip_window_start = now;
+            *count = 1;
+        } else {
+            *count = count.saturating_add(1);
+            if *count > MAX_LOGIN_REQUESTS_PER_MINUTE_PER_IP {
+                return Err(ApiError::too_many_requests(
+                    "Zbyt wiele prób logowania z Twojego adresu IP. Odczekaj chwilę.",
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn cleanup_old_windows(&self) {
+        let cutoff = Utc::now() - Duration::seconds(120);
+        self.per_ip.retain(|_, (timestamp, _)| *timestamp > cutoff);
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Session {
@@ -59,7 +123,22 @@ struct OAuthToken {
     access_token: String,
 }
 
-pub async fn login(State(state): State<WebState>) -> Result<Redirect, ApiError> {
+pub async fn login(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+) -> Result<Redirect, ApiError> {
+    let client_ip = extract_client_ip(&headers);
+    state.login_rate_limiter.check_and_record(&client_ip)?;
+
+    if state.oauth_states.len() >= MAX_PENDING_OAUTH_STATES {
+        cleanup_stale_records(&state);
+        if state.oauth_states.len() >= MAX_PENDING_OAUTH_STATES {
+            return Err(ApiError::too_many_requests(
+                "Osiągnięto limit oczekujących prób logowania. Spróbuj ponownie za chwilę.",
+            ));
+        }
+    }
+
     let csrf_state = Uuid::new_v4().to_string();
     state.oauth_states.insert(csrf_state.clone(), Utc::now());
 
@@ -233,6 +312,53 @@ pub fn ensure_guild_access(session: &Session, guild_id: &str) -> Result<(), ApiE
     }
 }
 
+pub fn cleanup_stale_records(state: &WebState) -> (usize, usize) {
+    cleanup_stale_data(
+        &state.oauth_states,
+        &state.sessions,
+        &state.login_rate_limiter,
+    )
+}
+
+pub fn cleanup_stale_data(
+    oauth_states: &DashMap<String, DateTime<Utc>>,
+    sessions: &DashMap<String, Session>,
+    limiter: &LoginRateLimiter,
+) -> (usize, usize) {
+    let now = Utc::now();
+    let max_state_age = Duration::minutes(10);
+
+    let before_states = oauth_states.len();
+    oauth_states.retain(|_, created_at| now - *created_at <= max_state_age);
+    let states_removed = before_states.saturating_sub(oauth_states.len());
+
+    let before_sessions = sessions.len();
+    sessions.retain(|_, session| session.expires_at > now);
+    let sessions_removed = before_sessions.saturating_sub(sessions.len());
+
+    limiter.cleanup_old_windows();
+
+    (states_removed, sessions_removed)
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("127.0.0.1")
+        .to_owned()
+}
+
 fn can_manage(guild: &DashboardGuild) -> bool {
     if guild.owner {
         return true;
@@ -265,4 +391,66 @@ fn expired_session_cookie(secure: bool) -> String {
         "{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
         if secure { "; Secure" } else { "" }
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_login_rate_limiter_blocks_excessive_attempts() {
+        let limiter = LoginRateLimiter::new();
+        let ip = "192.168.1.100";
+        for _ in 0..MAX_LOGIN_REQUESTS_PER_MINUTE_PER_IP {
+            assert!(limiter.check_and_record(ip).is_ok());
+        }
+        let blocked = limiter.check_and_record(ip);
+        assert!(blocked.is_err());
+        assert_eq!(blocked.unwrap_err().status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn test_cleanup_stale_records() {
+        let sessions = DashMap::new();
+        let oauth_states = DashMap::new();
+        let limiter = LoginRateLimiter::new();
+
+        oauth_states.insert("active_state".to_owned(), Utc::now());
+        oauth_states.insert("stale_state".to_owned(), Utc::now() - Duration::minutes(15));
+
+        let user = DashboardUser {
+            id: "123".to_owned(),
+            username: "tester".to_owned(),
+            global_name: None,
+            avatar: None,
+        };
+
+        sessions.insert(
+            "active_session".to_owned(),
+            Session {
+                user: user.clone(),
+                guilds: vec![],
+                csrf_token: "csrf1".to_owned(),
+                expires_at: Utc::now() + Duration::hours(1),
+            },
+        );
+
+        sessions.insert(
+            "expired_session".to_owned(),
+            Session {
+                user,
+                guilds: vec![],
+                csrf_token: "csrf2".to_owned(),
+                expires_at: Utc::now() - Duration::minutes(1),
+            },
+        );
+
+        let (st_cleaned, sess_cleaned) = cleanup_stale_data(&oauth_states, &sessions, &limiter);
+        assert_eq!(st_cleaned, 1);
+        assert_eq!(sess_cleaned, 1);
+        assert!(oauth_states.contains_key("active_state"));
+        assert!(!oauth_states.contains_key("stale_state"));
+        assert!(sessions.contains_key("active_session"));
+        assert!(!sessions.contains_key("expired_session"));
+    }
 }
