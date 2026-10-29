@@ -27,7 +27,9 @@ pub use postgres::PostgresSchedulerStore;
 
 const POLL_INTERVAL_SECONDS: u64 = 5;
 const LEASE_SECONDS: i64 = 60;
-const CLAIM_BATCH_SIZE: u8 = 25;
+const LEASE_RENEWAL_INTERVAL_SECONDS: u64 = 20;
+const CLAIM_BATCH_SIZE: u8 = 10;
+const DEFAULT_SCHEDULER_CONCURRENCY: usize = 4;
 
 #[derive(Clone)]
 pub enum SchedulerStore {
@@ -98,6 +100,18 @@ impl SchedulerStore {
         }
     }
 
+    pub async fn renew_lease(
+        &self,
+        job_id: &str,
+        worker_id: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<bool> {
+        match self {
+            Self::Memory(store) => Ok(store.renew_lease(job_id, worker_id, now)),
+            Self::Postgres(store) => Ok(store.renew_lease(job_id, worker_id, now).await?),
+        }
+    }
+
     pub async fn claim_due(
         &self,
         worker_id: &str,
@@ -144,16 +158,35 @@ pub async fn run_worker(http: Arc<Http>, state: AppState) -> Result<()> {
     let mut interval = tokio::time::interval(StdDuration::from_secs(POLL_INTERVAL_SECONDS));
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    tracing::info!(%worker_id, "persistent scheduler worker started");
+    let concurrency = std::env::var("SCHEDULER_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&c| c > 0)
+        .unwrap_or(DEFAULT_SCHEDULER_CONCURRENCY);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+
+    tracing::info!(%worker_id, concurrency, "persistent scheduler worker started");
     loop {
         interval.tick().await;
-        if let Err(error) = process_due_jobs(&http, &state, &worker_id).await {
+        if let Err(error) = process_due_jobs(&http, &state, &worker_id, &semaphore).await {
             tracing::error!(%worker_id, ?error, "scheduler polling iteration failed");
         }
     }
 }
 
-async fn process_due_jobs(http: &Http, state: &AppState, worker_id: &str) -> Result<()> {
+async fn process_due_jobs(
+    http: &Arc<Http>,
+    state: &AppState,
+    worker_id: &str,
+    semaphore: &Arc<tokio::sync::Semaphore>,
+) -> Result<()> {
+    let available_permits = semaphore
+        .available_permits()
+        .min(usize::from(CLAIM_BATCH_SIZE));
+    if available_permits == 0 {
+        return Ok(());
+    }
+
     let now = Utc::now();
     let jobs = state
         .scheduler
@@ -161,53 +194,126 @@ async fn process_due_jobs(http: &Http, state: &AppState, worker_id: &str) -> Res
             worker_id,
             now,
             now - Duration::seconds(LEASE_SECONDS),
-            CLAIM_BATCH_SIZE,
+            available_permits as u8,
         )
         .await?;
 
     for job in jobs {
-        match deliver_job(http, &job).await {
-            Ok(()) => {
-                let Some(updated) = state
-                    .scheduler
-                    .mark_succeeded(&job.id, worker_id, Utc::now())
-                    .await?
-                else {
-                    tracing::warn!(job_id = %job.id, "scheduler job lost its lease before completion");
-                    continue;
-                };
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => semaphore.clone().acquire_owned().await?,
+        };
 
-                record_delivery_audit(state, &updated, "scheduled_job_delivered", None).await;
-            }
-            Err(error) => {
-                let error_message = format!("{error:#}");
-                let Some(updated) = state
-                    .scheduler
-                    .mark_failed(&job.id, worker_id, Utc::now(), &error_message)
-                    .await?
-                else {
-                    tracing::warn!(job_id = %job.id, "failed scheduler job lost its lease");
-                    continue;
-                };
+        let http = http.clone();
+        let state = state.clone();
+        let worker_id = worker_id.to_string();
 
-                let event = if updated.status == STATUS_FAILED {
-                    "scheduled_job_failed"
-                } else {
-                    "scheduled_job_retry_scheduled"
-                };
-                record_delivery_audit(state, &updated, event, Some(&error_message)).await;
-                tracing::warn!(
-                    job_id = %updated.id,
-                    status = %updated.status,
-                    attempts = updated.attempts,
-                    ?error,
-                    "scheduled message delivery failed"
-                );
-            }
-        }
+        tokio::spawn(async move {
+            process_single_job(http, state, job, worker_id).await;
+            drop(permit);
+        });
     }
 
     Ok(())
+}
+
+async fn process_single_job(
+    http: Arc<Http>,
+    state: AppState,
+    job: ScheduledJob,
+    worker_id: String,
+) {
+    let job_id = job.id.clone();
+    let worker_id_heartbeat = worker_id.clone();
+    let state_heartbeat = state.clone();
+
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let heartbeat_handle = tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(StdDuration::from_secs(LEASE_RENEWAL_INTERVAL_SECONDS));
+        interval.tick().await;
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let now = Utc::now();
+                    match state_heartbeat.scheduler.renew_lease(&job_id, &worker_id_heartbeat, now).await {
+                        Ok(true) => {
+                            tracing::trace!(job_id = %job_id, "scheduler lease successfully renewed");
+                        }
+                        Ok(false) => {
+                            tracing::warn!(job_id = %job_id, "failed to renew scheduler lease: job was stolen or state mutated");
+                            break;
+                        }
+                        Err(err) => {
+                            tracing::error!(job_id = %job_id, ?err, "error during scheduler lease renewal heartbeat");
+                        }
+                    }
+                }
+                _ = &mut stop_rx => {
+                    break;
+                }
+            }
+        }
+    });
+
+    let delivery_result = deliver_job(&http, &job).await;
+    let _ = stop_tx.send(());
+    let _ = heartbeat_handle.await;
+
+    match delivery_result {
+        Ok(()) => {
+            let Some(updated) = state
+                .scheduler
+                .mark_succeeded(&job.id, &worker_id, Utc::now())
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::error!(job_id = %job.id, ?err, "failed to commit scheduler job success");
+                    None
+                })
+            else {
+                tracing::warn!(job_id = %job.id, "scheduler job lost its lease before completion");
+                return;
+            };
+
+            record_delivery_audit(
+                &state,
+                &updated,
+                &worker_id,
+                "scheduled_job_delivered",
+                None,
+            )
+            .await;
+        }
+        Err(error) => {
+            let error_message = format!("{error:#}");
+            let Some(updated) = state
+                .scheduler
+                .mark_failed(&job.id, &worker_id, Utc::now(), &error_message)
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::error!(job_id = %job.id, ?err, "failed to commit scheduler job failure");
+                    None
+                })
+            else {
+                tracing::warn!(job_id = %job.id, "failed scheduler job lost its lease");
+                return;
+            };
+
+            let event = if updated.status == STATUS_FAILED {
+                "scheduled_job_failed"
+            } else {
+                "scheduled_job_retry_scheduled"
+            };
+            record_delivery_audit(&state, &updated, &worker_id, event, Some(&error_message)).await;
+            tracing::warn!(
+                job_id = %updated.id,
+                status = %updated.status,
+                attempts = updated.attempts,
+                ?error,
+                "scheduled message delivery failed"
+            );
+        }
+    }
 }
 
 async fn deliver_job(http: &Http, job: &ScheduledJob) -> Result<()> {
@@ -237,6 +343,7 @@ async fn deliver_job(http: &Http, job: &ScheduledJob) -> Result<()> {
 async fn record_delivery_audit(
     state: &AppState,
     job: &ScheduledJob,
+    worker_id: &str,
     event: &str,
     error: Option<&str>,
 ) {
@@ -254,6 +361,7 @@ async fn record_delivery_audit(
                 "run_count": job.run_count,
                 "attempts": job.attempts,
                 "next_run_at": job.run_at,
+                "delivery_worker_id": worker_id,
                 "error": error,
             }),
         )

@@ -39,11 +39,32 @@ The PostgreSQL implementation uses:
 - terminal `completed`, `cancelled` and `failed` states;
 - transactional state transitions for create, control and delivery completion.
 
-## Delivery semantics
+## Delivery semantics, concurrency and lease management
 
-Delivery is **at least once**. A process can send a Discord message and terminate before recording success, in which case another worker may retry after the lease expires. Exactly-once delivery cannot be guaranteed because Discord message creation and the local database update are separate systems without a shared transaction.
+Delivery is **at least once**. Exactly-once delivery across distributed network boundaries cannot be guaranteed because Discord message creation and the local database update are separate distributed systems without a shared 2PC/distributed transaction.
 
-The design prioritizes not silently losing reminders. Future interaction components can expose duplicate-delivery diagnostics and manual replay controls without changing this persistence contract.
+### Worker concurrency and batch claiming
+
+- The scheduler worker operates with bounded concurrency managed via an asynchronous semaphore (configurable via the `SCHEDULER_CONCURRENCY` environment variable, defaulting to `4`).
+- Rather than claiming large static batches that sit queued in memory while their leases tick away, workers claim only as many jobs as there are currently available concurrency permits (up to a batch ceiling of `10`).
+- Claimed jobs begin execution immediately upon claiming.
+
+### Active lease heartbeat (`renew_lease`)
+
+- Jobs are claimed with a default lease window of `60 seconds` (`LEASE_SECONDS`).
+- To prevent a slow delivery (due to Discord API latency, network congestion, or Discord rate limits) from expiring its lease and being erroneously reclaimed by another worker, active jobs run a background lease renewal heartbeat every `20 seconds` (`LEASE_RENEWAL_INTERVAL_SECONDS`).
+- The heartbeat calls `renew_lease()`, updating `locked_at` and `updated_at` to the current timestamp.
+- As long as the delivery task is alive, other workers cannot reclaim the job.
+- When the job delivery completes or errors, the heartbeat task is aborted and the lease is released via `mark_succeeded()` or `mark_failed()`.
+
+### Worker crash recovery and the crash window
+
+- **Crash window**: There is an unavoidable window of vulnerability between the moment Discord accepts and publishes a message (HTTP 200 OK) and the moment the local worker commits `mark_succeeded()` to PostgreSQL or in-memory storage.
+- If the host worker process is killed (`SIGKILL`, power failure, hardware fault) during this window:
+  - The heartbeat task terminates immediately with the process.
+  - The job remains in `status = 'processing'` with the last `locked_at` timestamp.
+  - After `60 seconds` elapsed from `locked_at`, subsequent polling workers identify the job as a stale lease (`locked_at < stale_before`) and safely reclaim it for redelivery.
+- The delivery audit log records `delivery_worker_id`, `attempts`, and error diagnostics for every transition to facilitate deduplication analysis.
 
 ## Recurrence
 

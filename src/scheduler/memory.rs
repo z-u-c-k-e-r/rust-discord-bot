@@ -115,6 +115,14 @@ impl MemorySchedulerStore {
         JobMutationOutcome::Updated(Box::new(job.clone()))
     }
 
+    pub fn renew_lease(&self, job_id: &str, worker_id: &str, now: DateTime<Utc>) -> bool {
+        let mut jobs = self.lock();
+        let Some(job) = jobs.get_mut(job_id) else {
+            return false;
+        };
+        job.renew_lease(worker_id, now)
+    }
+
     pub fn claim_due(
         &self,
         worker_id: &str,

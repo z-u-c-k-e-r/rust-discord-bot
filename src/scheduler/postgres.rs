@@ -307,6 +307,35 @@ impl PostgresSchedulerStore {
         Ok(JobMutationOutcome::Updated(Box::new(updated)))
     }
 
+    pub async fn renew_lease(
+        &self,
+        job_id: &str,
+        worker_id: &str,
+        now: DateTime<Utc>,
+    ) -> anyhow::Result<bool> {
+        if Uuid::parse_str(job_id).is_err() {
+            return Ok(false);
+        }
+
+        let result = sqlx::query(
+            r#"
+            UPDATE scheduled_jobs
+            SET locked_at = $3,
+                updated_at = $3
+            WHERE id = $1::uuid
+              AND locked_by = $2
+              AND status = 'processing'
+            "#,
+        )
+        .bind(job_id)
+        .bind(worker_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn claim_due(
         &self,
         worker_id: &str,

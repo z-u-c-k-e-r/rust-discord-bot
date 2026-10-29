@@ -58,6 +58,16 @@ impl ScheduledJob {
         self.updated_at = now;
     }
 
+    pub fn renew_lease(&mut self, worker_id: &str, now: DateTime<Utc>) -> bool {
+        if self.status == STATUS_PROCESSING && self.locked_by.as_deref() == Some(worker_id) {
+            self.locked_at = Some(now);
+            self.updated_at = now;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn mark_succeeded(&mut self, now: DateTime<Utc>) {
         self.run_count = self.run_count.saturating_add(1);
         self.last_run_at = Some(now);
