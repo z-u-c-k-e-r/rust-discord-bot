@@ -19,6 +19,7 @@ use super::{
 pub struct ApiError {
     pub status: StatusCode,
     pub message: String,
+    pub details: Option<Vec<String>>,
 }
 
 impl ApiError {
@@ -26,6 +27,7 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
+            details: None,
         }
     }
 
@@ -33,6 +35,7 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
+            details: None,
         }
     }
 
@@ -40,6 +43,7 @@ impl ApiError {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
+            details: None,
         }
     }
 
@@ -47,6 +51,7 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
+            details: None,
         }
     }
 
@@ -54,6 +59,15 @@ impl ApiError {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
             message: message.into(),
+            details: None,
+        }
+    }
+
+    pub fn validation(message: impl Into<String>, details: Vec<String>) -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: message.into(),
+            details: Some(details),
         }
     }
 
@@ -63,6 +77,7 @@ impl ApiError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: "Wewnętrzny błąd panelu.".to_owned(),
+            details: None,
         }
     }
 
@@ -71,13 +86,18 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_GATEWAY,
             message: "Discord nie odpowiedział poprawnie podczas logowania.".to_owned(),
+            details: None,
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        let mut body = json!({ "error": self.message });
+        if let Some(details) = self.details {
+            body["details"] = json!(details);
+        }
+        (self.status, Json(body)).into_response()
     }
 }
 
@@ -185,6 +205,18 @@ pub async fn update_guild_module(
     if serialized_size > 64 * 1024 {
         return Err(ApiError::bad_request(
             "Konfiguracja modułu nie może przekraczać 64 KiB.",
+        ));
+    }
+
+    if let Err(validation_errors) = state
+        .app
+        .scripts
+        .validate_module_config(&module_id, &payload.config)
+        .await
+    {
+        return Err(ApiError::validation(
+            "Konfiguracja modułu jest niezgodna ze schematem JSON.",
+            validation_errors,
         ));
     }
 

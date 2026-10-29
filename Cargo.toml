@@ -15,6 +15,7 @@ axum = { version = "=0.8.9", features = ["http1", "json", "query", "tokio"] }
 chrono = { version = "=0.4.45", features = ["serde"] }
 dashmap = "=6.2.1"
 dotenvy = "=0.15.7"
+jsonschema = { version = "0.60.2", default-features = false }
 mlua = { version = "=0.12.1", features = ["lua54", "vendored", "serde", "send"] }
 reqwest = { version = "=0.13.4", default-features = false, features = ["form", "json", "rustls"] }
 # Songbird 0.6.0's stable YoutubeDl API still accepts reqwest 0.12. Keep this

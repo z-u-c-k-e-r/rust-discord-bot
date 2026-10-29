@@ -47,6 +47,7 @@ struct LoadedModule {
     manifest: LuaModuleManifest,
     source: Arc<str>,
     display_name: Arc<str>,
+    config_validator: Arc<jsonschema::Validator>,
 }
 
 #[derive(Debug, Error)]
@@ -69,6 +70,10 @@ pub enum LuaEngineError {
     DuplicateModule(String),
     #[error("duplicate slash command /{0}")]
     DuplicateCommand(String),
+    #[error("invalid config schema in Lua module {script}: {message}")]
+    InvalidConfigSchema { script: String, message: String },
+    #[error("unknown Lua module {0}")]
+    UnknownModuleForConfig(String),
     #[error("unknown Lua module {0}")]
     UnknownModule(String),
     #[error("module {module_id} does not implement command /{command}")]
@@ -146,6 +151,28 @@ impl LuaEngine {
             .modules
             .get(module_id)
             .map(|module| module.manifest.clone())
+    }
+
+    pub async fn validate_module_config(
+        &self,
+        module_id: &str,
+        config: &serde_json::Value,
+    ) -> Result<(), Vec<String>> {
+        let registry = self.registry.read().await;
+        let Some(module) = registry.modules.get(module_id) else {
+            return Err(vec![format!("Unknown Lua module: {module_id}")]);
+        };
+        let errors: Vec<String> = module
+            .config_validator
+            .iter_errors(config)
+            .map(|e| e.to_string())
+            .collect();
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 
     pub async fn execute_command(
@@ -260,12 +287,21 @@ fn build_registry(scripts_dir: &Path, limits: LuaLimits) -> Result<Registry, Lua
                 .push(manifest.id.clone());
         }
 
+        let config_validator =
+            jsonschema::validator_for(&manifest.config_schema).map_err(|error| {
+                LuaEngineError::InvalidConfigSchema {
+                    script: display_name.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+
         registry.modules.insert(
             manifest.id.clone(),
             Arc::new(LoadedModule {
                 manifest,
                 source: Arc::from(source),
                 display_name: Arc::from(display_name),
+                config_validator: Arc::new(config_validator),
             }),
         );
     }
