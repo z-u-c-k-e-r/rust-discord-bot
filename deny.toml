@@ -1,0 +1,78 @@
+[graph]
+targets = []
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+unmaintained = "workspace"
+unsound = "workspace"
+ignore = [
+    # RUSTSEC-2026-0387: crypto-bigint 0.5.5 timing variability in constant-time operations.
+    # Transitive via songbird 0.6.0 -> davey -> openmls -> elliptic-curve 0.13.8.
+    { id = "RUSTSEC-2026-0387", reason = "Transitive dependency via songbird 0.6.0 / openmls 0.8.1 pending upstream bump" },
+    # RUSTSEC-2026-0385: ctutils 0.4.2 non-constant-time mask generation.
+    # Transitive via songbird 0.6.0 -> davey -> openmls -> elliptic-curve 0.13.8.
+    { id = "RUSTSEC-2026-0385", reason = "Transitive dependency via songbird 0.6.0 / openmls 0.8.1 pending upstream bump" },
+    # RUSTSEC-2026-0382: rustls-webpki 0.102.8 certificate validation of untrusted emSign intermediates.
+    # Transitive via serenity 0.12.5 -> tokio-tungstenite 0.21.0 -> rustls 0.22.4.
+    { id = "RUSTSEC-2026-0382", reason = "Transitive dependency in serenity 0.12.5 / rustls 0.22.4 tree; main reqwest uses rustls 0.23 with webpki 0.103.16" },
+    # RUSTSEC-2026-0098: rustls-webpki 0.102.8 Name constraints were accepted for certificates asserting a URI name.
+    { id = "RUSTSEC-2026-0098", reason = "Transitive in serenity 0.12.5 rustls 0.22.4 tree; Discord gateway uses TLS server certs without URI names" },
+    # RUSTSEC-2026-0099: rustls-webpki 0.102.8 Name constraints were accepted for certificates asserting a wildcard name.
+    { id = "RUSTSEC-2026-0099", reason = "Transitive in serenity 0.12.5 rustls 0.22.4 tree; Discord gateway uses specific server FQDN" },
+    # RUSTSEC-2026-0104: rustls-webpki 0.102.8 Reachable panic in certificate revocation list parsing.
+    { id = "RUSTSEC-2026-0104", reason = "Transitive in serenity 0.12.5 rustls 0.22.4 tree; CRL parsing not enabled in gateway client" },
+    # RUSTSEC-2026-0049: rustls-webpki 0.102.8 CRLs not considered authoritative by Distribution Point due to faulty matching logic.
+    { id = "RUSTSEC-2026-0049", reason = "Transitive in serenity 0.12.5 rustls 0.22.4 tree; CRL parsing not enabled in gateway client" },
+    # RUSTSEC-2026-0293: ringbuf 0.4.8 Double-free on panic during element move.
+    { id = "RUSTSEC-2026-0293", reason = "Transitive dependency pinned in songbird 0.6.0; songbird audio producer does not panic on elements" },
+    # RUSTSEC-2026-0212: libcrux-secrets 0.0.5 constant-time swap/select on aarch64.
+    { id = "RUSTSEC-2026-0212", reason = "Transitive dependency in songbird 0.6.0 -> openmls -> hpke-rs; x86_64 server build not affected" },
+    # RUSTSEC-2026-0207: libcrux-sha3 0.0.8 incremental squeeze output.
+    { id = "RUSTSEC-2026-0207", reason = "Transitive dependency in songbird 0.6.0 -> openmls -> hpke-rs; SHAKE incremental squeeze not used in Discord audio" },
+    # RUSTSEC-2026-0208: libcrux-sha3 0.0.8 AVX2 SHAKE-256 buffer alignment panic.
+    { id = "RUSTSEC-2026-0208", reason = "Transitive dependency in songbird 0.6.0 -> openmls -> hpke-rs; Discord voice encryption uses AES-GCM/ChaCha20" },
+    # RUSTSEC-2026-0346: rustls 0.22.4 Debug impls for client session values expose TLS secrets.
+    { id = "RUSTSEC-2026-0346", reason = "Transitive in serenity 0.12.5; no debug logging of internal TLS session values configured" },
+    # RUSTSEC-2026-0349: rustls 0.22.4 Unauthenticated ServerHello can downgrade later connections.
+    { id = "RUSTSEC-2026-0349", reason = "Transitive in serenity 0.12.5; gateway connection uses direct authenticated wss endpoint" },
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

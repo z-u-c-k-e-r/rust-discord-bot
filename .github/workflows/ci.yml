@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -77,13 +78,7 @@ jobs:
           set -o pipefail
           cargo clippy --locked --all-targets --all-features -- -D warnings 2>&1 | tee clippy.log
 
-      - name: Run tests
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo test --locked --all-features 2>&1 | tee tests.log
-
-      - name: Validate PostgreSQL migrations
+      - name: Validate clean PostgreSQL migrations
         env:
           PGPASSWORD: zuckerbot
         shell: bash
@@ -99,6 +94,14 @@ jobs:
               --set ON_ERROR_STOP=1 \
               --file "${migration}"
           done
+
+      - name: Run tests (including PostgreSQL integration tests)
+        env:
+          DATABASE_URL: postgres://zuckerbot:zuckerbot@127.0.0.1:5432/zuckerbot
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --all-features 2>&1 | tee tests.log
 
       - name: Validate dashboard JavaScript
         run: node --check web/static/app.js
@@ -153,3 +156,30 @@ jobs:
           path: docker-build.log
           if-no-files-found: error
           retention-days: 7
+
+  security:
+    name: Security and supply-chain gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+
+      - name: Cache cargo deny
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo-deny check
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
+      - name: Dependency Review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
