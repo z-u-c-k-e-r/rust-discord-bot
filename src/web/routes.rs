@@ -124,7 +124,7 @@ pub async fn guild_modules(
     headers: HeaderMap,
 ) -> Result<Json<Vec<ModuleView>>, ApiError> {
     let (_, session) = authenticate(&state, &headers)?;
-    ensure_guild_access(&session, &guild_id)?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
 
     let manifests = state.app.scripts.manifests().await;
     let mut modules = Vec::with_capacity(manifests.len());
@@ -164,7 +164,7 @@ pub async fn update_guild_module(
     Json(payload): Json<UpdateModuleRequest>,
 ) -> Result<Json<ModuleView>, ApiError> {
     let (_, session) = authenticate(&state, &headers)?;
-    ensure_guild_access(&session, &guild_id)?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
     verify_csrf(&headers, &session)?;
 
     let manifest = state

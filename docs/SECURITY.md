@@ -80,12 +80,12 @@ Implemented:
 - Discord authorization-code OAuth2 flow
 - one-time random state values
 - ten-minute OAuth2 state lifetime
-- Discord access token discarded after profile and guild lookup
+- Discord OAuth2 access token retained in server session memory only for live permission revalidation (never serialized to client)
 - opaque HttpOnly session cookie
 - SameSite=Lax
 - optional Secure flag
 - session expiry
-- per-request manageable-guild authorization
+- live guild authorization revalidated against Discord with short-lived caching (60s TTL) for sensitive/write routes (fail-closed)
 - CSRF token required for writes
 - 64 KiB configuration limit
 - audit event for configuration changes

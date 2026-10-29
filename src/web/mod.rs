@@ -20,6 +20,7 @@ pub struct WebState {
     pub sessions: Arc<DashMap<String, auth::Session>>,
     pub oauth_states: Arc<DashMap<String, chrono::DateTime<chrono::Utc>>>,
     pub login_rate_limiter: Arc<auth::LoginRateLimiter>,
+    pub permissions_cache: Arc<DashMap<(String, String), auth::CachedGuildPermission>>,
 }
 
 pub async fn serve(app: AppState) -> Result<()> {
@@ -29,6 +30,7 @@ pub async fn serve(app: AppState) -> Result<()> {
         sessions: Arc::new(DashMap::new()),
         oauth_states: Arc::new(DashMap::new()),
         login_rate_limiter: Arc::new(auth::LoginRateLimiter::new()),
+        permissions_cache: Arc::new(DashMap::new()),
     };
 
     let cleanup_state = state.clone();
@@ -36,12 +38,13 @@ pub async fn serve(app: AppState) -> Result<()> {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
-            let (states, sessions) = auth::cleanup_stale_records(&cleanup_state);
-            if states > 0 || sessions > 0 {
+            let (states, sessions, perms) = auth::cleanup_stale_records(&cleanup_state);
+            if states > 0 || sessions > 0 || perms > 0 {
                 tracing::debug!(
                     states,
                     sessions,
-                    "pruned stale OAuth states and expired sessions"
+                    perms,
+                    "pruned stale OAuth states, expired sessions, and permissions"
                 );
             }
         }

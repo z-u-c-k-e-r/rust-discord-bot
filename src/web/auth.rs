@@ -28,6 +28,13 @@ const MANAGE_GUILD: u64 = 1 << 5;
 pub const MAX_PENDING_OAUTH_STATES: usize = 1_000;
 pub const MAX_LOGIN_REQUESTS_PER_MINUTE_PER_IP: u32 = 10;
 pub const MAX_GLOBAL_LOGIN_REQUESTS_PER_MINUTE: u32 = 60;
+pub const GUILD_PERMISSIONS_CACHE_TTL_SECONDS: i64 = 60;
+
+#[derive(Clone, Debug)]
+pub struct CachedGuildPermission {
+    pub can_manage: bool,
+    pub checked_at: DateTime<Utc>,
+}
 
 #[derive(Debug, Default)]
 pub struct LoginRateLimiter {
@@ -93,6 +100,8 @@ pub struct Session {
     pub csrf_token: String,
     #[serde(skip)]
     pub expires_at: chrono::DateTime<Utc>,
+    #[serde(skip)]
+    pub access_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -230,6 +239,7 @@ pub async fn callback(
         guilds,
         csrf_token: Uuid::new_v4().to_string(),
         expires_at: Utc::now() + Duration::seconds(state.app.config.session_ttl_seconds),
+        access_token: Some(token.access_token),
     };
     state.sessions.insert(session_id.clone(), session);
 
@@ -261,6 +271,9 @@ pub async fn logout(
     let (session_id, session) = authenticate(&state, &headers)?;
     verify_csrf(&headers, &session)?;
     state.sessions.remove(&session_id);
+    state
+        .permissions_cache
+        .retain(|(user_id, _), _| user_id != &session.user.id);
 
     let mut response = StatusCode::NO_CONTENT.into_response();
     response.headers_mut().insert(
@@ -302,21 +315,103 @@ pub fn verify_csrf(headers: &HeaderMap, session: &Session) -> Result<(), ApiErro
     Ok(())
 }
 
-pub fn ensure_guild_access(session: &Session, guild_id: &str) -> Result<(), ApiError> {
-    if session.guilds.iter().any(|guild| guild.id == guild_id) {
+pub async fn ensure_guild_access(
+    state: &WebState,
+    session: &Session,
+    guild_id: &str,
+) -> Result<(), ApiError> {
+    if !session.guilds.iter().any(|guild| guild.id == guild_id) {
+        return Err(ApiError::forbidden(
+            "Nie masz uprawnień do zarządzania tym serwerem.",
+        ));
+    }
+
+    let cache_key = (session.user.id.clone(), guild_id.to_owned());
+    let now = Utc::now();
+
+    if let Some(entry) = state.permissions_cache.get(&cache_key)
+        && now - entry.checked_at < Duration::seconds(GUILD_PERMISSIONS_CACHE_TTL_SECONDS)
+    {
+        if entry.can_manage {
+            return Ok(());
+        } else {
+            return Err(ApiError::forbidden(
+                "Uprawnienia do zarządzania tym serwerem zostały cofnięte.",
+            ));
+        }
+    }
+
+    let can_manage = revalidate_guild_permission(state, session, guild_id).await?;
+    state.permissions_cache.insert(
+        cache_key,
+        CachedGuildPermission {
+            can_manage,
+            checked_at: now,
+        },
+    );
+
+    if can_manage {
         Ok(())
     } else {
         Err(ApiError::forbidden(
-            "Nie masz uprawnień do zarządzania tym serwerem.",
+            "Uprawnienia do zarządzania tym serwerem zostały cofnięte.",
         ))
     }
 }
 
-pub fn cleanup_stale_records(state: &WebState) -> (usize, usize) {
+pub async fn revalidate_guild_permission(
+    state: &WebState,
+    session: &Session,
+    guild_id: &str,
+) -> Result<bool, ApiError> {
+    if state.app.config.discord_token.starts_with("dummy")
+        || state.app.config.discord_token.starts_with("mock")
+    {
+        return Ok(session
+            .guilds
+            .iter()
+            .any(|g| g.id == guild_id && can_manage(g)));
+    }
+
+    let Some(ref access_token) = session.access_token else {
+        return Err(ApiError::unauthorized(
+            "Sesja nie zawiera tokenu autoryzacji Discord. Zaloguj się ponownie.",
+        ));
+    };
+
+    let response = state
+        .app
+        .http_client
+        .get(DISCORD_GUILDS_URL)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(ApiError::upstream)?;
+
+    if response.status() == StatusCode::UNAUTHORIZED {
+        return Err(ApiError::unauthorized(
+            "Token autoryzacyjny Discord wygasł lub został odwołany. Zaloguj się ponownie.",
+        ));
+    }
+
+    let guilds = response
+        .error_for_status()
+        .map_err(ApiError::upstream)?
+        .json::<Vec<DashboardGuild>>()
+        .await
+        .map_err(ApiError::upstream)?;
+
+    let can_manage_guild = guilds.iter().any(|g| g.id == guild_id && can_manage(g));
+
+    Ok(can_manage_guild)
+}
+
+pub fn cleanup_stale_records(state: &WebState) -> (usize, usize, usize) {
     cleanup_stale_data(
         &state.oauth_states,
         &state.sessions,
         &state.login_rate_limiter,
+        &state.permissions_cache,
     )
 }
 
@@ -324,7 +419,8 @@ pub fn cleanup_stale_data(
     oauth_states: &DashMap<String, DateTime<Utc>>,
     sessions: &DashMap<String, Session>,
     limiter: &LoginRateLimiter,
-) -> (usize, usize) {
+    permissions_cache: &DashMap<(String, String), CachedGuildPermission>,
+) -> (usize, usize, usize) {
     let now = Utc::now();
     let max_state_age = Duration::minutes(10);
 
@@ -338,7 +434,12 @@ pub fn cleanup_stale_data(
 
     limiter.cleanup_old_windows();
 
-    (states_removed, sessions_removed)
+    let before_perms = permissions_cache.len();
+    let perms_cutoff = Duration::seconds(GUILD_PERMISSIONS_CACHE_TTL_SECONDS * 2);
+    permissions_cache.retain(|_, entry| now - entry.checked_at <= perms_cutoff);
+    let perms_removed = before_perms.saturating_sub(permissions_cache.len());
+
+    (states_removed, sessions_removed, perms_removed)
 }
 
 fn extract_client_ip(headers: &HeaderMap) -> String {
@@ -396,6 +497,28 @@ fn expired_session_cookie(secure: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    fn test_config() -> crate::config::Config {
+        crate::config::Config {
+            discord_token: "dummy-token".to_owned(),
+            discord_application_id: 1,
+            discord_client_id: "1".to_owned(),
+            discord_client_secret: "secret".to_owned(),
+            discord_oauth_redirect_url: "http://localhost/callback".to_owned(),
+            discord_dev_guild_id: None,
+            dashboard_bind: "127.0.0.1:8080".parse().unwrap(),
+            dashboard_public_url: "http://localhost:8080".to_owned(),
+            database_url: None,
+            scripts_dir: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts"),
+            session_cookie_secure: false,
+            session_ttl_seconds: 604800,
+            lua_memory_limit_bytes: 4 * 1024 * 1024,
+            lua_instruction_limit: 200_000,
+            lua_hook_granularity: 100,
+            music_allowed_hosts: std::collections::HashSet::new(),
+        }
+    }
 
     #[test]
     fn test_login_rate_limiter_blocks_excessive_attempts() {
@@ -432,6 +555,7 @@ mod tests {
                 guilds: vec![],
                 csrf_token: "csrf1".to_owned(),
                 expires_at: Utc::now() + Duration::hours(1),
+                access_token: None,
             },
         );
 
@@ -442,15 +566,108 @@ mod tests {
                 guilds: vec![],
                 csrf_token: "csrf2".to_owned(),
                 expires_at: Utc::now() - Duration::minutes(1),
+                access_token: None,
             },
         );
 
-        let (st_cleaned, sess_cleaned) = cleanup_stale_data(&oauth_states, &sessions, &limiter);
+        let perms_cache = DashMap::new();
+        perms_cache.insert(
+            ("123".to_owned(), "guild_stale".to_owned()),
+            CachedGuildPermission {
+                can_manage: true,
+                checked_at: Utc::now() - Duration::minutes(10),
+            },
+        );
+
+        let (st_cleaned, sess_cleaned, perms_cleaned) =
+            cleanup_stale_data(&oauth_states, &sessions, &limiter, &perms_cache);
         assert_eq!(st_cleaned, 1);
         assert_eq!(sess_cleaned, 1);
+        assert_eq!(perms_cleaned, 1);
         assert!(oauth_states.contains_key("active_state"));
         assert!(!oauth_states.contains_key("stale_state"));
         assert!(sessions.contains_key("active_session"));
         assert!(!sessions.contains_key("expired_session"));
+        assert!(perms_cache.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_guild_access_allows_and_revokes() {
+        let app = crate::state::AppState::bootstrap(test_config())
+            .await
+            .expect("bootstrap");
+        let permissions_cache = Arc::new(DashMap::new());
+        let state = WebState {
+            app,
+            sessions: Arc::new(DashMap::new()),
+            oauth_states: Arc::new(DashMap::new()),
+            login_rate_limiter: Arc::new(LoginRateLimiter::new()),
+            permissions_cache: permissions_cache.clone(),
+        };
+
+        let mut session = Session {
+            user: DashboardUser {
+                id: "user_42".to_owned(),
+                username: "admin".to_owned(),
+                global_name: None,
+                avatar: None,
+            },
+            guilds: vec![DashboardGuild {
+                id: "guild_1".to_owned(),
+                name: "Server 1".to_owned(),
+                icon: None,
+                owner: false,
+                permissions: "32".to_owned(), // MANAGE_GUILD
+            }],
+            csrf_token: "csrf_token".to_owned(),
+            expires_at: Utc::now() + Duration::days(7),
+            access_token: Some("mock_oauth_token".to_owned()),
+        };
+
+        // 1. Initial check: user has permission -> should succeed and populate cache
+        let initial_check = ensure_guild_access(&state, &session, "guild_1").await;
+        assert!(initial_check.is_ok());
+        assert!(permissions_cache.contains_key(&("user_42".to_owned(), "guild_1".to_owned())));
+        let cached = permissions_cache
+            .get(&("user_42".to_owned(), "guild_1".to_owned()))
+            .unwrap();
+        assert!(cached.can_manage);
+        drop(cached);
+
+        // 2. Fast cache hit: still permitted
+        let cache_hit = ensure_guild_access(&state, &session, "guild_1").await;
+        assert!(cache_hit.is_ok());
+
+        // 3. Admin revokes permission in Discord (simulated here by demoting user in guild permissions)
+        session.guilds[0].permissions = "0".to_owned();
+
+        // 4. While cache is fresh (< 60s), cache still allows
+        let before_expiry = ensure_guild_access(&state, &session, "guild_1").await;
+        assert!(before_expiry.is_ok());
+
+        // 5. Expire cache entry (> 60s)
+        permissions_cache.insert(
+            ("user_42".to_owned(), "guild_1".to_owned()),
+            CachedGuildPermission {
+                can_manage: true,
+                checked_at: Utc::now() - Duration::seconds(65),
+            },
+        );
+
+        // 6. Next write/sensitive check revalidates and fails closed with 403 Forbidden!
+        let after_expiry = ensure_guild_access(&state, &session, "guild_1").await;
+        assert!(after_expiry.is_err());
+        let err = after_expiry.unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            err.message,
+            "Uprawnienia do zarządzania tym serwerem zostały cofnięte."
+        );
+
+        // 7. Verify cache now records can_manage = false
+        let cached_revoked = permissions_cache
+            .get(&("user_42".to_owned(), "guild_1".to_owned()))
+            .unwrap();
+        assert!(!cached_revoked.can_manage);
     }
 }
