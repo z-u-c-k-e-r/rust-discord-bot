@@ -100,17 +100,29 @@ Production requirements:
 - rotate Discord credentials after suspected exposure
 - retain audit logs according to a documented privacy policy
 
-## Media source security
+## Media source security and egress network hardening
 
-Music input can invoke an external media resolver. To reduce SSRF exposure:
+Music input invokes external media resolution and streaming via `yt-dlp` / Songbird. Protection against Server-Side Request Forgery (SSRF) combines three defense-in-depth layers:
 
-- URLs must use HTTPS
-- URL hosts must match `MUSIC_ALLOWED_HOSTS`
-- plain text is treated as a search query
-- Lua cannot change the allowlist
-- the runtime does not expose arbitrary HTTP actions
+### 1. Application-level input validation
+- User-provided URLs must use HTTPS (`https://`).
+- The initial hostname is strictly validated against `MUSIC_ALLOWED_HOSTS` (`youtube.com`, `soundcloud.com`, `bandcamp.com`, etc.). Subdomains must terminate with a registered root domain (`host == candidate || host.ends_with(".{candidate}")`).
+- IP literals in URLs are checked against private, loopback, link-local, and reserved ranges (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`) and rejected immediately.
+- Plain text is treated strictly as a search query, never as a raw network endpoint.
+- Lua modules cannot modify or bypass the host allowlist.
 
-Production media workers should run in a separate network namespace with no access to metadata endpoints, databases or internal control-plane services.
+### 2. HTTP client egress redirect policy
+- The media HTTP client enforces a strict redirect policy:
+  - Follow-up redirects must remain on HTTPS (`https://`).
+  - Redirect targets to private, loopback, carrier-grade NAT (`100.64.0.0/10`), link-local, or cloud metadata endpoints (`169.254.169.254`) are intercepted and rejected.
+  - Redirect chains are bounded to at most 10 hops.
+
+### 3. Container and network-level isolation
+Production deployments must isolate media workers at the host/container firewall layer:
+- Run media containers in an isolated Docker network bridge without host network access.
+- Block egress to cloud metadata services (`169.254.169.254/32`).
+- Block outbound traffic from media workers to internal VPC ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and local daemon ports (PostgreSQL `5432`, Dashboard `8080`).
+- Ensure DNS resolvers drop or filter responses resolving to RFC 1918 addresses (DNS rebinding prevention).
 
 ## Message safety
 

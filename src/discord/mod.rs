@@ -1,7 +1,7 @@
 mod commands;
 mod executor;
 mod handler;
-mod music;
+pub mod music;
 mod progression;
 mod scheduler;
 mod tickets;

@@ -37,6 +37,26 @@ impl AppState {
         let http_client = reqwest::Client::builder().user_agent(user_agent).build()?;
         let media_http_client = reqwest_songbird::Client::builder()
             .user_agent(user_agent)
+            .redirect(reqwest_songbird::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 10 {
+                    return attempt.error("zbyt wiele przekierowań w odtwarzaczu mediów");
+                }
+
+                let next_url = attempt.url();
+                if next_url.scheme() != "https" {
+                    return attempt
+                        .error("przekierowanie w odtwarzaczu mediów musi używać protokołu HTTPS");
+                }
+
+                if let Some(host) = next_url.host_str()
+                    && let Ok(ip) = host.parse::<std::net::IpAddr>()
+                    && crate::discord::music::is_blocked_ip(ip)
+                {
+                    return attempt.error("przekierowanie do zablokowanego prywatnego adresu IP");
+                }
+
+                attempt.follow()
+            }))
             .build()?;
 
         Ok(Self {
