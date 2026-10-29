@@ -4,6 +4,7 @@ pub mod lua;
 pub mod metrics;
 pub mod moderation_cases;
 pub mod scheduler;
+pub mod session;
 pub mod state;
 pub mod storage;
 pub mod tickets;

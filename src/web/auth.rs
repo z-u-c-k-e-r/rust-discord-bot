@@ -11,7 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use url::Url;
 use uuid::Uuid;
 
@@ -93,33 +93,7 @@ impl LoginRateLimiter {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct Session {
-    pub user: DashboardUser,
-    pub guilds: Vec<DashboardGuild>,
-    pub csrf_token: String,
-    #[serde(skip)]
-    pub expires_at: chrono::DateTime<Utc>,
-    #[serde(skip)]
-    pub access_token: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DashboardUser {
-    pub id: String,
-    pub username: String,
-    pub global_name: Option<String>,
-    pub avatar: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DashboardGuild {
-    pub id: String,
-    pub name: String,
-    pub icon: Option<String>,
-    pub owner: bool,
-    pub permissions: String,
-}
+pub use crate::session::{DashboardGuild, DashboardUser, Session};
 
 #[derive(Deserialize)]
 pub struct OAuthCallback {
@@ -139,9 +113,21 @@ pub async fn login(
     let client_ip = extract_client_ip(&headers);
     state.login_rate_limiter.check_and_record(&client_ip)?;
 
-    if state.oauth_states.len() >= MAX_PENDING_OAUTH_STATES {
-        cleanup_stale_records(&state);
-        if state.oauth_states.len() >= MAX_PENDING_OAUTH_STATES {
+    let pending = state
+        .app
+        .sessions
+        .count_pending_oauth_states()
+        .await
+        .unwrap_or(0);
+    if pending >= MAX_PENDING_OAUTH_STATES {
+        cleanup_stale_records(&state).await;
+        let pending_after = state
+            .app
+            .sessions
+            .count_pending_oauth_states()
+            .await
+            .unwrap_or(0);
+        if pending_after >= MAX_PENDING_OAUTH_STATES {
             return Err(ApiError::too_many_requests(
                 "Osiągnięto limit oczekujących prób logowania. Spróbuj ponownie za chwilę.",
             ));
@@ -149,7 +135,12 @@ pub async fn login(
     }
 
     let csrf_state = Uuid::new_v4().to_string();
-    state.oauth_states.insert(csrf_state.clone(), Utc::now());
+    state
+        .app
+        .sessions
+        .save_oauth_state(&csrf_state)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
     let mut url =
         Url::parse(DISCORD_AUTHORIZE_URL).map_err(|error| ApiError::internal(error.to_string()))?;
@@ -168,13 +159,16 @@ pub async fn callback(
     State(state): State<WebState>,
     Query(query): Query<OAuthCallback>,
 ) -> Result<Response, ApiError> {
-    let Some((_, created_at)) = state.oauth_states.remove(&query.state) else {
+    let valid_state = state
+        .app
+        .sessions
+        .consume_oauth_state(&query.state)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    if !valid_state {
         return Err(ApiError::bad_request(
-            "Nieprawidłowy stan logowania OAuth2.",
+            "Nieprawidłowy stan logowania OAuth2 lub sesja wygasła.",
         ));
-    };
-    if Utc::now() - created_at > Duration::minutes(10) {
-        return Err(ApiError::bad_request("Próba logowania OAuth2 wygasła."));
     }
 
     let token = state
@@ -234,14 +228,22 @@ pub async fn callback(
         .collect::<Vec<_>>();
 
     let session_id = Uuid::new_v4().to_string();
-    let session = Session {
-        user,
-        guilds,
-        csrf_token: Uuid::new_v4().to_string(),
-        expires_at: Utc::now() + Duration::seconds(state.app.config.session_ttl_seconds),
-        access_token: Some(token.access_token),
-    };
-    state.sessions.insert(session_id.clone(), session);
+    let csrf_token = Uuid::new_v4().to_string();
+    let expires_at = Utc::now() + Duration::seconds(state.app.config.session_ttl_seconds);
+
+    state
+        .app
+        .sessions
+        .save_session(
+            &session_id,
+            user,
+            guilds,
+            csrf_token,
+            expires_at,
+            None, // Discord access token is discarded after OAuth lookup
+        )
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
     let mut response = Redirect::to("/").into_response();
     response.headers_mut().insert(
@@ -260,7 +262,7 @@ pub async fn current_session(
     State(state): State<WebState>,
     headers: HeaderMap,
 ) -> Result<Json<Session>, ApiError> {
-    let (_, session) = authenticate(&state, &headers)?;
+    let (_, session) = authenticate(&state, &headers).await?;
     Ok(Json(session))
 }
 
@@ -268,9 +270,9 @@ pub async fn logout(
     State(state): State<WebState>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let (session_id, session) = authenticate(&state, &headers)?;
+    let (session_id, session) = authenticate(&state, &headers).await?;
     verify_csrf(&headers, &session)?;
-    state.sessions.remove(&session_id);
+    let _ = state.app.sessions.delete_session(&session_id).await;
     state
         .permissions_cache
         .retain(|(user_id, _), _| user_id != &session.user.id);
@@ -286,21 +288,19 @@ pub async fn logout(
     Ok(response)
 }
 
-pub fn authenticate(state: &WebState, headers: &HeaderMap) -> Result<(String, Session), ApiError> {
+pub async fn authenticate(
+    state: &WebState,
+    headers: &HeaderMap,
+) -> Result<(String, Session), ApiError> {
     let session_id = cookie_value(headers, SESSION_COOKIE)
         .ok_or_else(|| ApiError::unauthorized("Zaloguj się przez Discord."))?;
     let session = state
+        .app
         .sessions
-        .get(&session_id)
-        .map(|entry| entry.value().clone())
+        .get_session(&session_id)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
         .ok_or_else(|| ApiError::unauthorized("Sesja wygasła. Zaloguj się ponownie."))?;
-
-    if session.expires_at <= Utc::now() {
-        state.sessions.remove(&session_id);
-        return Err(ApiError::unauthorized(
-            "Sesja wygasła. Zaloguj się ponownie.",
-        ));
-    }
 
     Ok((session_id, session))
 }
@@ -374,9 +374,10 @@ pub async fn revalidate_guild_permission(
     }
 
     let Some(ref access_token) = session.access_token else {
-        return Err(ApiError::unauthorized(
-            "Sesja nie zawiera tokenu autoryzacji Discord. Zaloguj się ponownie.",
-        ));
+        return Ok(session
+            .guilds
+            .iter()
+            .any(|g| g.id == guild_id && can_manage(g)));
     };
 
     let response = state
@@ -406,15 +407,37 @@ pub async fn revalidate_guild_permission(
     Ok(can_manage_guild)
 }
 
-pub fn cleanup_stale_records(state: &WebState) -> (usize, usize, usize) {
-    cleanup_stale_data(
-        &state.oauth_states,
-        &state.sessions,
-        &state.login_rate_limiter,
-        &state.permissions_cache,
+pub async fn cleanup_stale_records(state: &WebState) -> (usize, usize, usize) {
+    let states_removed = state
+        .app
+        .sessions
+        .cleanup_expired_oauth_states()
+        .await
+        .unwrap_or(0);
+    let sessions_removed = state
+        .app
+        .sessions
+        .cleanup_expired_sessions()
+        .await
+        .unwrap_or(0);
+    state.login_rate_limiter.cleanup_old_windows();
+
+    let now = Utc::now();
+    let before_perms = state.permissions_cache.len();
+    let perms_cutoff = Duration::seconds(GUILD_PERMISSIONS_CACHE_TTL_SECONDS * 2);
+    state
+        .permissions_cache
+        .retain(|_, entry| now - entry.checked_at <= perms_cutoff);
+    let perms_removed = before_perms.saturating_sub(state.permissions_cache.len());
+
+    (
+        states_removed as usize,
+        sessions_removed as usize,
+        perms_removed,
     )
 }
 
+#[cfg(test)]
 pub fn cleanup_stale_data(
     oauth_states: &DashMap<String, DateTime<Utc>>,
     sessions: &DashMap<String, Session>,
@@ -599,8 +622,6 @@ mod tests {
         let permissions_cache = Arc::new(DashMap::new());
         let state = WebState {
             app,
-            sessions: Arc::new(DashMap::new()),
-            oauth_states: Arc::new(DashMap::new()),
             login_rate_limiter: Arc::new(LoginRateLimiter::new()),
             permissions_cache: permissions_cache.clone(),
         };

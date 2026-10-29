@@ -178,7 +178,13 @@ pub async fn health_ready(
 
 pub async fn prometheus_metrics(State(state): State<WebState>) -> impl IntoResponse {
     use axum::http::header::CONTENT_TYPE;
-    let body = state.app.metrics.render_prometheus(state.sessions.len());
+    let active_sessions = state
+        .app
+        .sessions
+        .count_active_sessions()
+        .await
+        .unwrap_or(0);
+    let body = state.app.metrics.render_prometheus(active_sessions);
     (
         [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
         body,
@@ -189,7 +195,7 @@ pub async fn list_modules(
     State(state): State<WebState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<LuaModuleManifest>>, ApiError> {
-    authenticate(&state, &headers)?;
+    authenticate(&state, &headers).await?;
     Ok(Json(state.app.scripts.manifests().await))
 }
 
@@ -198,7 +204,7 @@ pub async fn guild_modules(
     Path(guild_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<ModuleView>>, ApiError> {
-    let (_, session) = authenticate(&state, &headers)?;
+    let (_, session) = authenticate(&state, &headers).await?;
     ensure_guild_access(&state, &session, &guild_id).await?;
 
     let manifests = state.app.scripts.manifests().await;
@@ -238,7 +244,7 @@ pub async fn update_guild_module(
     headers: HeaderMap,
     Json(payload): Json<UpdateModuleRequest>,
 ) -> Result<Json<ModuleView>, ApiError> {
-    let (_, session) = authenticate(&state, &headers)?;
+    let (_, session) = authenticate(&state, &headers).await?;
     ensure_guild_access(&state, &session, &guild_id).await?;
     verify_csrf(&headers, &session)?;
 
