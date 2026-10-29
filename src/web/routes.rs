@@ -102,12 +102,6 @@ impl IntoResponse for ApiError {
 }
 
 #[derive(Serialize)]
-pub struct Health {
-    status: &'static str,
-    version: &'static str,
-}
-
-#[derive(Serialize)]
 pub struct ModuleView {
     manifest: LuaModuleManifest,
     enabled: bool,
@@ -123,11 +117,72 @@ pub struct UpdateModuleRequest {
     config: Value,
 }
 
-pub async fn health() -> Json<Health> {
-    Json(Health {
-        status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
-    })
+pub async fn health_live(State(state): State<WebState>) -> Json<Value> {
+    state
+        .app
+        .metrics
+        .dashboard_requests_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Json(json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_seconds": state.app.metrics.uptime_seconds(),
+    }))
+}
+
+pub async fn health_ready(
+    State(state): State<WebState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    state
+        .app
+        .metrics
+        .dashboard_requests_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut checks = serde_json::Map::new();
+    let mut is_ready = true;
+
+    match state.app.storage.ping().await {
+        Ok(()) => {
+            checks.insert("storage".to_owned(), json!("ok"));
+        }
+        Err(e) => {
+            is_ready = false;
+            checks.insert("storage".to_owned(), json!(format!("error: {e}")));
+        }
+    }
+
+    let manifest_count = state.app.scripts.manifests().await.len();
+    if manifest_count > 0 {
+        checks.insert(
+            "lua_engine".to_owned(),
+            json!(format!("ok ({manifest_count} modules)")),
+        );
+    } else {
+        is_ready = false;
+        checks.insert("lua_engine".to_owned(), json!("error: no modules loaded"));
+    }
+
+    let payload = json!({
+        "status": if is_ready { "ready" } else { "unready" },
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_seconds": state.app.metrics.uptime_seconds(),
+        "checks": checks,
+    });
+
+    if is_ready {
+        Ok(Json(payload))
+    } else {
+        Err((StatusCode::SERVICE_UNAVAILABLE, Json(payload)))
+    }
+}
+
+pub async fn prometheus_metrics(State(state): State<WebState>) -> impl IntoResponse {
+    use axum::http::header::CONTENT_TYPE;
+    let body = state.app.metrics.render_prometheus(state.sessions.len());
+    (
+        [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        body,
+    )
 }
 
 pub async fn list_modules(

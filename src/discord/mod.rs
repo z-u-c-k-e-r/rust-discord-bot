@@ -18,6 +18,14 @@ use songbird::SerenityInit;
 use crate::AppState;
 
 pub async fn run(state: AppState) -> Result<()> {
+    let (_tx, rx) = tokio::sync::broadcast::channel(1);
+    run_with_shutdown(state, rx).await
+}
+
+pub async fn run_with_shutdown(
+    state: AppState,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) -> Result<()> {
     if state.config.discord_token.starts_with("dummy")
         || state.config.discord_token == "mock"
         || state.config.discord_token == "offline"
@@ -26,7 +34,12 @@ pub async fn run(state: AppState) -> Result<()> {
             .unwrap_or(false)
     {
         tracing::warn!("offline/mock test mode active: skipping live Discord Gateway connection");
-        tokio::time::sleep(std::time::Duration::from_secs(86400 * 365)).await;
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(86400 * 365)) => {}
+            _ = shutdown_rx.recv() => {
+                tracing::info!("offline discord worker received shutdown signal");
+            }
+        }
         return Ok(());
     }
 
@@ -49,6 +62,14 @@ pub async fn run(state: AppState) -> Result<()> {
         Arc::clone(&client.http),
         state.clone(),
     ));
+
+    let shard_manager = Arc::clone(&client.shard_manager);
+    tokio::spawn(async move {
+        let _ = shutdown_rx.recv().await;
+        tracing::info!("discord client received shutdown signal, shutting down shards");
+        shard_manager.shutdown_all().await;
+    });
+
     let client_result = client.start_autosharded().await;
     scheduler_worker.abort();
     client_result?;

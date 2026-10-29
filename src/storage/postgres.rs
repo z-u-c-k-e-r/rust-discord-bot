@@ -43,6 +43,11 @@ impl PostgresStore {
         Ok(result)
     }
 
+    pub async fn ping(&self) -> anyhow::Result<()> {
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        Ok(())
+    }
+
     pub async fn set_module_settings(
         &self,
         guild_id: &str,

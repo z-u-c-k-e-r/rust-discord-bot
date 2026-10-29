@@ -63,6 +63,13 @@ impl Storage {
         }
     }
 
+    pub async fn ping(&self) -> anyhow::Result<()> {
+        match self {
+            Self::Memory(_) => Ok(()),
+            Self::Postgres(store) => store.ping().await,
+        }
+    }
+
     pub async fn set_module_settings(
         &self,
         guild_id: &str,

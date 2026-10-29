@@ -19,6 +19,7 @@ pub struct AppState {
     pub tickets: TicketStore,
     pub http_client: reqwest::Client,
     pub media_http_client: reqwest_songbird::Client,
+    pub metrics: Arc<crate::metrics::Metrics>,
 }
 
 impl AppState {
@@ -59,6 +60,7 @@ impl AppState {
             }))
             .build()?;
 
+        let metrics = Arc::new(crate::metrics::Metrics::new());
         Ok(Self {
             config,
             scripts,
@@ -67,6 +69,7 @@ impl AppState {
             tickets,
             http_client,
             media_http_client,
+            metrics,
         })
     }
 }

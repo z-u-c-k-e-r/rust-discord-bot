@@ -24,6 +24,14 @@ pub struct WebState {
 }
 
 pub async fn serve(app: AppState) -> Result<()> {
+    let (_tx, rx) = tokio::sync::broadcast::channel(1);
+    serve_with_shutdown(app, rx).await
+}
+
+pub async fn serve_with_shutdown(
+    app: AppState,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) -> Result<()> {
     let bind = app.config.dashboard_bind;
     let state = WebState {
         app,
@@ -54,7 +62,11 @@ pub async fn serve(app: AppState) -> Result<()> {
         .route("/", get(static_files::index))
         .route("/assets/styles.css", get(static_files::styles))
         .route("/assets/app.js", get(static_files::javascript))
-        .route("/healthz", get(routes::health))
+        .route("/healthz", get(routes::health_live))
+        .route("/health/live", get(routes::health_live))
+        .route("/readyz", get(routes::health_ready))
+        .route("/health/ready", get(routes::health_ready))
+        .route("/metrics", get(routes::prometheus_metrics))
         .route("/auth/discord", get(auth::login))
         .route("/auth/discord/callback", get(auth::callback))
         .route("/api/session", get(auth::current_session))
@@ -69,7 +81,12 @@ pub async fn serve(app: AppState) -> Result<()> {
 
     let listener = TcpListener::bind(bind).await?;
     tracing::info!(%bind, "dashboard is listening");
-    axum::serve(listener, router).await?;
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.recv().await;
+            tracing::info!("dashboard received shutdown signal");
+        })
+        .await?;
 
     Ok(())
 }
