@@ -15,9 +15,7 @@ use serenity::{
 
 use crate::{
     AppState,
-    lua::{
-        TicketClosePolicy, TicketOpenPolicy, TicketOperation, TicketPriority, TicketScope,
-    },
+    lua::{TicketClosePolicy, TicketOpenPolicy, TicketOperation, TicketPriority, TicketScope},
     tickets::{
         NewTicketReservation, NewTicketTranscript, ParticipantMutationOutcome,
         ReserveTicketOutcome, STATUS_CLAIMED, STATUS_CLOSED, STATUS_FAILED, STATUS_OPEN,
@@ -134,17 +132,10 @@ pub async fn execute(
             Ok(Some(format_ticket_list(&tickets, include_all)))
         }
         TicketOperation::Info => {
+            // Reaching this command already requires Discord View Channel access. The ticket
+            // operation carries no policy snapshot, so re-checking an empty role set would
+            // incorrectly reject support-role members who can legitimately see the channel.
             let ticket = require_current_ticket(state, guild_id, channel_id).await?;
-            ensure_ticket_access(
-                ctx,
-                state,
-                &ticket,
-                guild_id,
-                actor_id,
-                execution.actor_permissions,
-                &[],
-            )
-            .await?;
             let participants = state.tickets.list_participants(&ticket.id).await?;
             let events = state.tickets.list_events(&ticket.id, 10).await?;
             Ok(Some(format_ticket_info(&ticket, &participants, &events)))
@@ -251,8 +242,12 @@ pub async fn execute(
             }
             let open_category = ensure_category(ctx, guild_id, open_category_id).await?;
             let participants = state.tickets.list_participants(&ticket.id).await?;
-            restore_member_access(ctx, channel_id, UserId::new(parse_snowflake(&ticket.creator_user_id)?))
-                .await?;
+            restore_member_access(
+                ctx,
+                channel_id,
+                UserId::new(parse_snowflake(&ticket.creator_user_id)?),
+            )
+            .await?;
             for participant in &participants {
                 restore_member_access(
                     ctx,
@@ -414,13 +409,8 @@ pub async fn execute(
                         None,
                     )
                     .await?;
-                    audit_ticket(
-                        state,
-                        &updated,
-                        Some(&actor_key),
-                        "ticket_priority_changed",
-                    )
-                    .await?;
+                    audit_ticket(state, &updated, Some(&actor_key), "ticket_priority_changed")
+                        .await?;
                     Ok(Some(format!(
                         "✅ Priorytet ticketu **#{}**: **{}**.",
                         updated.display_number(),
@@ -450,16 +440,10 @@ pub async fn execute(
                 support_role_ids,
             )
             .await?;
-            let log_channel = resolve_optional_log_channel(ctx, guild_id, log_channel_id.as_deref())
-                .await?;
-            let transcript = create_and_store_transcript(
-                ctx,
-                state,
-                &ticket,
-                actor_id,
-                *max_messages,
-            )
-            .await?;
+            let log_channel =
+                resolve_optional_log_channel(ctx, guild_id, log_channel_id.as_deref()).await?;
+            let transcript =
+                create_and_store_transcript(ctx, state, &ticket, actor_id, *max_messages).await?;
             send_transcript(ctx, channel_id, &ticket, &transcript).await?;
             if let Some(log_channel) = log_channel
                 && log_channel != channel_id
@@ -505,8 +489,8 @@ async fn open_ticket(
         ensure_category(ctx, guild_id, category_id).await?;
     }
     validate_support_roles(ctx, guild_id, &policy.support_role_ids).await?;
-    let log_channel = resolve_optional_log_channel(ctx, guild_id, policy.log_channel_id.as_deref())
-        .await?;
+    let log_channel =
+        resolve_optional_log_channel(ctx, guild_id, policy.log_channel_id.as_deref()).await?;
 
     let guild_key = guild_id.get().to_string();
     let actor_key = actor_id.get().to_string();
@@ -539,12 +523,7 @@ async fn open_ticket(
         &reserved.subject,
     );
     let bot_id = ctx.cache.current_user().id;
-    let permissions = build_open_permissions(
-        guild_id,
-        actor_id,
-        bot_id,
-        &policy.support_role_ids,
-    )?;
+    let permissions = build_open_permissions(guild_id, actor_id, bot_id, &policy.support_role_ids)?;
     let topic = format!(
         "ZuckerBot ticket {} | owner {} | queue {}",
         reserved.id, reserved.creator_user_id, reserved.queue
@@ -565,7 +544,10 @@ async fn open_ticket(
         Err(error) => {
             let _ = state
                 .tickets
-                .fail_provisioning(&reserved.id, &format!("Discord channel creation failed: {error}"))
+                .fail_provisioning(
+                    &reserved.id,
+                    &format!("Discord channel creation failed: {error}"),
+                )
                 .await;
             return Err(error.into());
         }
@@ -587,7 +569,10 @@ async fn open_ticket(
                 .tickets
                 .fail_provisioning(
                     &reserved.id,
-                    &format!("ticket activation failed: {}", format_mutation_outcome(outcome)),
+                    &format!(
+                        "ticket activation failed: {}",
+                        format_mutation_outcome(outcome)
+                    ),
                 )
                 .await;
             return Err(anyhow!("nie udało się aktywować rekordu ticketu"));
@@ -595,13 +580,7 @@ async fn open_ticket(
     };
 
     let welcome = format_welcome_message(&activated, policy.welcome_message.as_deref());
-    if let Err(error) = send_system_message(
-        ctx,
-        created_channel.id,
-        &welcome,
-        Some(actor_id),
-    )
-    .await
+    if let Err(error) = send_system_message(ctx, created_channel.id, &welcome, Some(actor_id)).await
     {
         tracing::warn!(ticket_id = %activated.id, ?error, "cannot send ticket welcome message");
     }
@@ -615,7 +594,9 @@ async fn open_ticket(
             activated.queue,
             activated.subject,
         );
-        if let Err(error) = send_system_message(ctx, log_channel, &log_message, Some(actor_id)).await {
+        if let Err(error) =
+            send_system_message(ctx, log_channel, &log_message, Some(actor_id)).await
+        {
             tracing::warn!(ticket_id = %activated.id, ?error, "cannot send ticket log message");
         }
     }
@@ -667,8 +648,12 @@ async fn close_ticket(
         )));
     }
 
-    let log_channel = resolve_optional_log_channel(ctx, guild_id, policy.log_channel_id.as_deref())
-        .await?;
+    let log_channel =
+        resolve_optional_log_channel(ctx, guild_id, policy.log_channel_id.as_deref()).await?;
+    let archive_category = match policy.archive_category_id.as_deref() {
+        Some(category_id) => Some(ensure_category(ctx, guild_id, category_id).await?),
+        None => None,
+    };
     let transcript = if policy.generate_transcript {
         let transcript = create_and_store_transcript(
             ctx,
@@ -681,10 +666,9 @@ async fn close_ticket(
         send_transcript(ctx, channel_id, &ticket, &transcript).await?;
         if let Some(log_channel) = log_channel
             && log_channel != channel_id
+            && let Err(error) = send_transcript(ctx, log_channel, &ticket, &transcript).await
         {
-            if let Err(error) = send_transcript(ctx, log_channel, &ticket, &transcript).await {
-                tracing::warn!(ticket_id = %ticket.id, ?error, "cannot send transcript to log channel");
-            }
+            tracing::warn!(ticket_id = %ticket.id, ?error, "cannot send transcript to log channel");
         }
         Some(transcript)
     } else {
@@ -709,8 +693,8 @@ async fn close_ticket(
 
     let closed_name = build_closed_channel_name(&ticket);
     let mut edit = EditChannel::new().name(&closed_name);
-    if let Some(category_id) = policy.archive_category_id.as_deref() {
-        edit = edit.category(ensure_category(ctx, guild_id, category_id).await?);
+    if let Some(archive_category) = archive_category {
+        edit = edit.category(archive_category);
     }
     channel_id.edit(&ctx.http, edit).await?;
 
@@ -776,14 +760,8 @@ async fn manage_participant(
     ensure_bot_permissions(app_permissions, Permissions::MANAGE_CHANNELS)?;
     let ticket = require_current_ticket(state, guild_id, channel_id).await?;
     let actor_key = actor_id.get().to_string();
-    let staff = actor_is_staff(
-        ctx,
-        guild_id,
-        actor_id,
-        actor_permissions,
-        support_role_ids,
-    )
-    .await?;
+    let staff =
+        actor_is_staff(ctx, guild_id, actor_id, actor_permissions, support_role_ids).await?;
     if !staff && !(creator_can_manage && ticket.creator_user_id == actor_key) {
         return Err(anyhow!(
             "zarządzanie uczestnikami wymaga roli wsparcia albo uprawnienia właściciela ticketu"
@@ -797,6 +775,29 @@ async fn manage_participant(
         .context("użytkownik nie należy do tego serwera")?;
     if member.user.bot {
         return Err(anyhow!("bot nie może zostać uczestnikiem ticketu"));
+    }
+
+    // Resolve the domain state before changing Discord overwrites. Otherwise an idempotent
+    // add could revoke an existing participant, while removing an unknown user could grant
+    // that user access during rollback.
+    if ticket.creator_user_id == user_id {
+        return Ok(Some(format_participant_outcome(
+            ParticipantMutationOutcome::CreatorProtected,
+        )));
+    }
+    let participants = state.tickets.list_participants(&ticket.id).await?;
+    let is_participant = participants
+        .iter()
+        .any(|participant| participant.user_id == user_id);
+    if add && is_participant {
+        return Ok(Some(format_participant_outcome(
+            ParticipantMutationOutcome::AlreadyPresent,
+        )));
+    }
+    if !add && !is_participant {
+        return Ok(Some(format_participant_outcome(
+            ParticipantMutationOutcome::NotFound,
+        )));
     }
 
     if add {
@@ -814,13 +815,7 @@ async fn manage_participant(
                     Some(target_id),
                 )
                 .await?;
-                audit_ticket(
-                    state,
-                    &ticket,
-                    Some(&actor_key),
-                    "ticket_participant_added",
-                )
-                .await?;
+                audit_ticket(state, &ticket, Some(&actor_key), "ticket_participant_added").await?;
                 Ok(Some(format!(
                     "✅ Dodano <@{}> do ticketu.",
                     target_id.get()
@@ -877,10 +872,7 @@ async fn require_current_ticket(
 ) -> Result<TicketRecord> {
     state
         .tickets
-        .get_by_channel(
-            &guild_id.get().to_string(),
-            &channel_id.get().to_string(),
-        )
+        .get_by_channel(&guild_id.get().to_string(), &channel_id.get().to_string())
         .await?
         .ok_or_else(|| anyhow!("ten kanał nie jest zarejestrowanym ticketem"))
 }
@@ -895,14 +887,7 @@ async fn ensure_ticket_access(
     support_role_ids: &[String],
 ) -> Result<()> {
     if ticket.creator_user_id == actor_id.get().to_string()
-        || actor_is_staff(
-            ctx,
-            guild_id,
-            actor_id,
-            actor_permissions,
-            support_role_ids,
-        )
-        .await?
+        || actor_is_staff(ctx, guild_id, actor_id, actor_permissions, support_role_ids).await?
     {
         return Ok(());
     }
@@ -926,15 +911,7 @@ async fn ensure_staff(
     actor_permissions: Permissions,
     support_role_ids: &[String],
 ) -> Result<()> {
-    if actor_is_staff(
-        ctx,
-        guild_id,
-        actor_id,
-        actor_permissions,
-        support_role_ids,
-    )
-    .await?
-    {
+    if actor_is_staff(ctx, guild_id, actor_id, actor_permissions, support_role_ids).await? {
         Ok(())
     } else {
         Err(anyhow!(
@@ -965,7 +942,10 @@ async fn actor_is_staff(
         .map(|value| parse_snowflake(value).map(RoleId::new))
         .collect::<Result<HashSet<_>>>()?;
     let member = guild_id.member(&ctx.http, actor_id).await?;
-    Ok(member.roles.iter().any(|role_id| expected.contains(role_id)))
+    Ok(member
+        .roles
+        .iter()
+        .any(|role_id| expected.contains(role_id)))
 }
 
 async fn validate_support_roles(
@@ -982,17 +962,15 @@ async fn validate_support_roles(
             ));
         }
         if !guild.roles.contains_key(&role_id) {
-            return Err(anyhow!("rola wsparcia {role_id} nie istnieje na tym serwerze"));
+            return Err(anyhow!(
+                "rola wsparcia {role_id} nie istnieje na tym serwerze"
+            ));
         }
     }
     Ok(())
 }
 
-async fn ensure_category(
-    ctx: &Context,
-    guild_id: GuildId,
-    category_id: &str,
-) -> Result<ChannelId> {
+async fn ensure_category(ctx: &Context, guild_id: GuildId, category_id: &str) -> Result<ChannelId> {
     let category_id = ChannelId::new(parse_snowflake(category_id)?);
     match category_id.to_channel(ctx).await? {
         Channel::Guild(channel)
@@ -1026,7 +1004,9 @@ async fn resolve_optional_log_channel(
         Channel::Guild(_) => Err(anyhow!(
             "kanał logów ticketów musi być kanałem tekstowym tego serwera"
         )),
-        _ => Err(anyhow!("kanał prywatny nie może być kanałem logów ticketów")),
+        _ => Err(anyhow!(
+            "kanał prywatny nie może być kanałem logów ticketów"
+        )),
     }
 }
 
@@ -1067,7 +1047,11 @@ fn build_open_permissions(
     Ok(permissions)
 }
 
-async fn restore_member_access(ctx: &Context, channel_id: ChannelId, user_id: UserId) -> Result<()> {
+async fn restore_member_access(
+    ctx: &Context,
+    channel_id: ChannelId,
+    user_id: UserId,
+) -> Result<()> {
     channel_id
         .create_permission(
             &ctx.http,
@@ -1186,7 +1170,9 @@ async fn build_transcript(
     for message in &messages {
         let line = format_transcript_message(message);
         if output.len().saturating_add(line.len()) > MAX_TRANSCRIPT_BYTES {
-            output.push_str("\n[Transcript truncated because the safe attachment limit was reached.]\n");
+            output.push_str(
+                "\n[Transcript truncated because the safe attachment limit was reached.]\n",
+            );
             break;
         }
         output.push_str(&line);
@@ -1344,7 +1330,7 @@ fn format_ticket_info(
     let claimed = ticket
         .claimed_by_user_id
         .as_deref()
-        .map(|id| format!("<@{id}>") )
+        .map(|id| format!("<@{id}>"))
         .unwrap_or_else(|| "nieprzejęty".to_owned());
     let participant_list = if participants.is_empty() {
         "brak".to_owned()
@@ -1391,9 +1377,7 @@ fn format_mutation_outcome(outcome: TicketMutationOutcome) -> String {
             status_label(&ticket.status)
         ),
         TicketMutationOutcome::NotFound => "Nie znaleziono ticketu.".to_owned(),
-        TicketMutationOutcome::Forbidden => {
-            "Nie masz uprawnień do zmiany tego ticketu.".to_owned()
-        }
+        TicketMutationOutcome::Forbidden => "Nie masz uprawnień do zmiany tego ticketu.".to_owned(),
         TicketMutationOutcome::InvalidState { current_status } => format!(
             "Ta operacja nie jest dozwolona dla ticketu w stanie **{}**.",
             status_label(&current_status)
@@ -1490,7 +1474,11 @@ fn truncate(value: &str, maximum: usize) -> String {
     if value.chars().count() <= maximum {
         value.to_owned()
     } else {
-        value.chars().take(maximum.saturating_sub(3)).collect::<String>() + "..."
+        value
+            .chars()
+            .take(maximum.saturating_sub(3))
+            .collect::<String>()
+            + "..."
     }
 }
 
@@ -1545,7 +1533,10 @@ mod tests {
 
     #[test]
     fn channel_names_are_sanitized_and_bounded() {
-        assert_eq!(sanitize_channel_name("Problem z PŁATNOŚCIĄ!!!"), "problem-z-patnoci");
+        assert_eq!(
+            sanitize_channel_name("Problem z PŁATNOŚCIĄ!!!"),
+            "problem-z-patnoci"
+        );
         let name = build_initial_channel_name("ticket", 42, &"a".repeat(300));
         assert!(name.len() <= 100);
         assert!(name.starts_with("ticket-000042-"));

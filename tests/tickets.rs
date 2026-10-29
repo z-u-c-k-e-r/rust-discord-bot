@@ -195,11 +195,7 @@ async fn ticket_claim_close_and_reopen_preserve_the_lifecycle_contract() {
     );
 
     let closed = store
-        .close_ticket(
-            &ticket.id,
-            "100000000000000030",
-            Some("Rozwiązano"),
-        )
+        .close_ticket(&ticket.id, "100000000000000030", Some("Rozwiązano"))
         .await
         .expect("close should succeed");
     let TicketMutationOutcome::Updated(closed) = closed else {
@@ -225,24 +221,13 @@ async fn creator_cannot_be_added_or_removed_as_a_regular_participant() {
     let ticket = active_ticket(&store).await;
 
     let add = store
-        .add_participant(
-            &ticket.id,
-            &ticket.creator_user_id,
-            "100000000000000030",
-        )
+        .add_participant(&ticket.id, &ticket.creator_user_id, "100000000000000030")
         .await
         .expect("participant mutation should return a domain outcome");
-    assert!(matches!(
-        add,
-        ParticipantMutationOutcome::CreatorProtected
-    ));
+    assert!(matches!(add, ParticipantMutationOutcome::CreatorProtected));
 
     let remove = store
-        .remove_participant(
-            &ticket.id,
-            &ticket.creator_user_id,
-            "100000000000000030",
-        )
+        .remove_participant(&ticket.id, &ticket.creator_user_id, "100000000000000030")
         .await
         .expect("participant mutation should return a domain outcome");
     assert!(matches!(
@@ -257,17 +242,10 @@ async fn participant_and_transcript_changes_are_persisted_with_ticket_events() {
     let ticket = active_ticket(&store).await;
 
     let participant = store
-        .add_participant(
-            &ticket.id,
-            "100000000000000040",
-            "100000000000000030",
-        )
+        .add_participant(&ticket.id, "100000000000000040", "100000000000000030")
         .await
         .expect("participant add should succeed");
-    assert!(matches!(
-        participant,
-        ParticipantMutationOutcome::Added(_)
-    ));
+    assert!(matches!(participant, ParticipantMutationOutcome::Added(_)));
     assert_eq!(
         store
             .list_participants(&ticket.id)

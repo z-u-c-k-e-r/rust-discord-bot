@@ -187,12 +187,7 @@ impl TicketOpenPolicy {
         if !(1..=25).contains(&self.max_open_per_user) {
             return Err("max_open_per_user must be between 1 and 25".to_owned());
         }
-        validate_identifier(
-            &self.channel_name_prefix,
-            1,
-            24,
-            "ticket channel prefix",
-        )?;
+        validate_identifier(&self.channel_name_prefix, 1, 24, "ticket channel prefix")?;
         validate_optional_text(&self.welcome_message, 1_500, "ticket welcome message")
     }
 }
@@ -223,9 +218,7 @@ impl TicketClosePolicy {
             validate_snowflake(channel_id)?;
         }
         if !(1..=1_000).contains(&self.transcript_max_messages) {
-            return Err(
-                "ticket transcript_max_messages must be between 1 and 1000".to_owned()
-            );
+            return Err("ticket transcript_max_messages must be between 1 and 1000".to_owned());
         }
         Ok(())
     }
@@ -288,10 +281,9 @@ fn validate_identifier(
             "{label} must contain between {minimum} and {maximum} characters"
         ));
     }
-    if !value
-        .bytes()
-        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_')
-    {
+    if !value.bytes().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+    }) {
         return Err(format!(
             "{label} may contain only lowercase ASCII letters, digits, hyphens and underscores"
         ));
@@ -299,12 +291,7 @@ fn validate_identifier(
     Ok(())
 }
 
-fn validate_text(
-    value: &str,
-    minimum: usize,
-    maximum: usize,
-    label: &str,
-) -> Result<(), String> {
+fn validate_text(value: &str, minimum: usize, maximum: usize, label: &str) -> Result<(), String> {
     let length = value.trim().chars().count();
     if length < minimum || length > maximum {
         return Err(format!(

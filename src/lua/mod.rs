@@ -2,6 +2,7 @@ mod engine;
 mod model;
 mod progression;
 mod scheduler;
+mod tickets;
 
 pub use engine::{LuaEngine, LuaEngineError, LuaLimits};
 pub use model::{
@@ -11,3 +12,6 @@ pub use model::{
 };
 pub use progression::{ProgressionMetric, ProgressionOperation};
 pub use scheduler::{SchedulerOperation, SchedulerScope};
+pub use tickets::{
+    TicketClosePolicy, TicketOpenPolicy, TicketOperation, TicketPriority, TicketScope,
+};

@@ -4,6 +4,7 @@ mod handler;
 mod music;
 mod progression;
 mod scheduler;
+mod tickets;
 
 use std::sync::Arc;
 

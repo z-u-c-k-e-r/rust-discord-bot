@@ -7,6 +7,7 @@ on:
       - main
       - feat/progression-economy
       - feat/persistent-scheduler-reminders
+      - feat/ticket-support-workflows
 
 permissions:
   contents: read

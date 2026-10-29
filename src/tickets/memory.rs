@@ -311,13 +311,28 @@ impl MemoryTicketStore {
         actor_user_id: &str,
         channel_name: &str,
     ) -> TicketMutationOutcome {
-        self.update_open_ticket(
-            ticket_id,
-            actor_user_id,
-            TicketMutation::Rename,
+        let mut state = self.lock();
+        let updated = {
+            let Some(ticket) = state.tickets.get_mut(ticket_id) else {
+                return TicketMutationOutcome::NotFound;
+            };
+            if !ticket.is_open() && ticket.status != STATUS_CLOSED {
+                return TicketMutationOutcome::InvalidState {
+                    current_status: ticket.status.clone(),
+                };
+            }
+            ticket.rename(channel_name.to_owned(), Utc::now());
+            ticket.clone()
+        };
+        push_event(
+            &mut state,
+            &updated.id,
+            &updated.guild_id,
+            Some(actor_user_id),
+            TicketMutation::Rename.event_name(),
             json!({ "channel_name": channel_name }),
-            |ticket| ticket.rename(channel_name.to_owned(), Utc::now()),
-        )
+        );
+        TicketMutationOutcome::Updated(Box::new(updated))
     }
 
     pub fn set_priority(
@@ -456,7 +471,7 @@ impl MemoryTicketStore {
             .filter(|event| event.ticket_id == ticket_id)
             .cloned()
             .collect::<Vec<_>>();
-        events.sort_by(|left, right| right.id.cmp(&left.id));
+        events.sort_by_key(|event| std::cmp::Reverse(event.id));
         events.truncate(limit);
         events
     }
@@ -538,8 +553,9 @@ fn push_event(
     data: Value,
 ) {
     state.next_event_id = state.next_event_id.saturating_add(1);
+    let event_id = state.next_event_id;
     state.events.push(TicketEvent {
-        id: state.next_event_id,
+        id: event_id,
         ticket_id: ticket_id.to_owned(),
         guild_id: guild_id.to_owned(),
         actor_user_id: actor_user_id.map(str::to_owned),

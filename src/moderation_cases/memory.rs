@@ -6,9 +6,9 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use super::{
-    CaseDetails, CaseError, CaseEvent, CaseEvidence, CaseFilter, CaseKind, CaseNote,
-    CaseStatus, CreateCase, ModerationCase, ModeratorStats, UpdateCase, validate_evidence,
-    validate_note, validate_void_reason,
+    CaseDetails, CaseError, CaseEvent, CaseEvidence, CaseFilter, CaseKind, CaseNote, CaseStatus,
+    CreateCase, ModerationCase, ModeratorStats, UpdateCase, validate_evidence, validate_note,
+    validate_void_reason,
 };
 
 #[derive(Debug, Default)]
@@ -410,10 +410,7 @@ impl MemoryModerationCaseStore {
                 CaseKind::Timeout => result.timeout_cases += 1,
                 CaseKind::Kick => result.kick_cases += 1,
                 CaseKind::Ban => result.ban_cases += 1,
-                CaseKind::StaffNote
-                | CaseKind::Unban
-                | CaseKind::Automod
-                | CaseKind::Other => {},
+                CaseKind::StaffNote | CaseKind::Unban | CaseKind::Automod | CaseKind::Other => {}
             }
         }
         Ok(result)

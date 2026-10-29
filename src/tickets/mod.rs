@@ -41,13 +41,9 @@ impl TicketStore {
         max_open_per_user: u8,
     ) -> Result<ReserveTicketOutcome> {
         match self {
-            Self::Memory(store) => {
-                Ok(store.reserve_ticket(reservation, max_open_per_user))
-            }
+            Self::Memory(store) => Ok(store.reserve_ticket(reservation, max_open_per_user)),
             Self::Postgres(store) => {
-                Ok(store
-                    .reserve_ticket(reservation, max_open_per_user)
-                    .await?)
+                Ok(store.reserve_ticket(reservation, max_open_per_user).await?)
             }
         }
     }
@@ -123,9 +119,7 @@ impl TicketStore {
         allow_any: bool,
     ) -> Result<TicketMutationOutcome> {
         match self {
-            Self::Memory(store) => {
-                Ok(store.unclaim_ticket(ticket_id, actor_user_id, allow_any))
-            }
+            Self::Memory(store) => Ok(store.unclaim_ticket(ticket_id, actor_user_id, allow_any)),
             Self::Postgres(store) => Ok(store
                 .unclaim_ticket(ticket_id, actor_user_id, allow_any)
                 .await?),
@@ -140,9 +134,9 @@ impl TicketStore {
     ) -> Result<TicketMutationOutcome> {
         match self {
             Self::Memory(store) => Ok(store.close_ticket(ticket_id, actor_user_id, reason)),
-            Self::Postgres(store) => Ok(store
-                .close_ticket(ticket_id, actor_user_id, reason)
-                .await?),
+            Self::Postgres(store) => {
+                Ok(store.close_ticket(ticket_id, actor_user_id, reason).await?)
+            }
         }
     }
 
@@ -164,9 +158,7 @@ impl TicketStore {
         channel_name: &str,
     ) -> Result<TicketMutationOutcome> {
         match self {
-            Self::Memory(store) => {
-                Ok(store.rename_ticket(ticket_id, actor_user_id, channel_name))
-            }
+            Self::Memory(store) => Ok(store.rename_ticket(ticket_id, actor_user_id, channel_name)),
             Self::Postgres(store) => Ok(store
                 .rename_ticket(ticket_id, actor_user_id, channel_name)
                 .await?),
@@ -208,11 +200,7 @@ impl TicketStore {
         actor_user_id: &str,
     ) -> Result<ParticipantMutationOutcome> {
         match self {
-            Self::Memory(store) => Ok(store.remove_participant(
-                ticket_id,
-                user_id,
-                actor_user_id,
-            )),
+            Self::Memory(store) => Ok(store.remove_participant(ticket_id, user_id, actor_user_id)),
             Self::Postgres(store) => Ok(store
                 .remove_participant(ticket_id, user_id, actor_user_id)
                 .await?),
@@ -238,9 +226,7 @@ impl TicketStore {
 
     pub async fn list_events(&self, ticket_id: &str, limit: u16) -> Result<Vec<TicketEvent>> {
         match self {
-            Self::Memory(store) => {
-                Ok(store.list_events(ticket_id, usize::from(limit)))
-            }
+            Self::Memory(store) => Ok(store.list_events(ticket_id, usize::from(limit))),
             Self::Postgres(store) => Ok(store.list_events(ticket_id, limit).await?),
         }
     }

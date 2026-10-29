@@ -371,10 +371,7 @@ fn validate_points(points: i32) -> Result<(), CaseError> {
     Ok(())
 }
 
-fn validate_expiry(
-    expires_at: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-) -> Result<(), CaseError> {
+fn validate_expiry(expires_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Result<(), CaseError> {
     if let Some(expires_at) = expires_at {
         if expires_at <= now {
             return Err(CaseError::Validation(

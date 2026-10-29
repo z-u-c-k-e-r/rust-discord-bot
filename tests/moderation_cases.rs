@@ -88,10 +88,7 @@ async fn complete_case_lifecycle_is_versioned_and_audited() {
     assert_eq!(restored.status, CaseStatus::Active);
     assert_eq!(restored.version, 4);
 
-    let details = store
-        .get_case(10, created.case_number, now)
-        .await
-        .unwrap();
+    let details = store.get_case(10, created.case_number, now).await.unwrap();
     assert_eq!(details.notes.len(), 1);
     assert_eq!(details.evidence.len(), 1);
     assert!(details.events.len() >= 6);

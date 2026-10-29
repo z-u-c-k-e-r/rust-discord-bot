@@ -223,8 +223,8 @@ impl PostgresModerationCaseStore {
         let row = match row {
             Some(row) => row,
             None => {
-                let current = fetch_case_in_transaction(&mut transaction, guild_id, case_number)
-                    .await?;
+                let current =
+                    fetch_case_in_transaction(&mut transaction, guild_id, case_number).await?;
                 if current.status == CaseStatus::Voided {
                     return Err(CaseError::Validation(
                         "voided cases must be restored before editing".to_owned(),
@@ -379,8 +379,8 @@ impl PostgresModerationCaseStore {
         let row = match row {
             Some(row) => row,
             None => {
-                let current = fetch_case_in_transaction(&mut transaction, guild_id, case_number)
-                    .await?;
+                let current =
+                    fetch_case_in_transaction(&mut transaction, guild_id, case_number).await?;
                 if current.status == CaseStatus::Voided {
                     return Err(CaseError::Validation(
                         "moderation case is already voided".to_owned(),
@@ -444,8 +444,8 @@ impl PostgresModerationCaseStore {
         let row = match row {
             Some(row) => row,
             None => {
-                let current = fetch_case_in_transaction(&mut transaction, guild_id, case_number)
-                    .await?;
+                let current =
+                    fetch_case_in_transaction(&mut transaction, guild_id, case_number).await?;
                 if current.status != CaseStatus::Voided {
                     return Err(CaseError::Validation(
                         "only voided moderation cases can be restored".to_owned(),
@@ -519,22 +519,17 @@ impl PostgresModerationCaseStore {
         guild_id: u64,
         case_number: i64,
     ) -> Result<ModerationCase, CaseError> {
-        let row = sqlx::query(
-            "SELECT * FROM moderation_cases WHERE guild_id = $1 AND case_number = $2",
-        )
-        .bind(guild_id.to_string())
-        .bind(case_number)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or(CaseError::NotFound)?;
+        let row =
+            sqlx::query("SELECT * FROM moderation_cases WHERE guild_id = $1 AND case_number = $2")
+                .bind(guild_id.to_string())
+                .bind(case_number)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or(CaseError::NotFound)?;
         map_case(&row)
     }
 
-    async fn expire_due(
-        &self,
-        guild_id: u64,
-        now: DateTime<Utc>,
-    ) -> Result<(), CaseError> {
+    async fn expire_due(&self, guild_id: u64, now: DateTime<Utc>) -> Result<(), CaseError> {
         let mut transaction = self.pool.begin().await?;
         let rows = sqlx::query(
             r#"
@@ -675,7 +670,9 @@ fn map_event(row: &PgRow) -> Result<CaseEvent, CaseError> {
 
 fn parse_snowflake(value: String) -> Result<u64, CaseError> {
     value.parse::<u64>().map_err(|error| {
-        CaseError::Validation(format!("invalid Discord snowflake stored in database: {error}"))
+        CaseError::Validation(format!(
+            "invalid Discord snowflake stored in database: {error}"
+        ))
     })
 }
 

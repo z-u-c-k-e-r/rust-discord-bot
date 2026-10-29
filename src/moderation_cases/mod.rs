@@ -7,11 +7,11 @@ use sqlx::PgPool;
 
 pub use memory::MemoryModerationCaseStore;
 pub use model::{
-    CaseDetails, CaseError, CaseEvent, CaseEvidence, CaseFilter, CaseKind, CaseNote,
-    CaseSeverity, CaseStatus, CreateCase, MAX_EVIDENCE_LABEL_LENGTH, MAX_EVIDENCE_VALUE_LENGTH,
-    MAX_EXPIRY_DAYS, MAX_LIST_LIMIT, MAX_NOTE_LENGTH, MAX_POINTS, MAX_REASON_LENGTH,
-    MAX_SOURCE_MODULE_LENGTH, ModerationCase, ModeratorStats, UpdateCase, validate_evidence,
-    validate_note, validate_void_reason,
+    CaseDetails, CaseError, CaseEvent, CaseEvidence, CaseFilter, CaseKind, CaseNote, CaseSeverity,
+    CaseStatus, CreateCase, MAX_EVIDENCE_LABEL_LENGTH, MAX_EVIDENCE_VALUE_LENGTH, MAX_EXPIRY_DAYS,
+    MAX_LIST_LIMIT, MAX_NOTE_LENGTH, MAX_POINTS, MAX_REASON_LENGTH, MAX_SOURCE_MODULE_LENGTH,
+    ModerationCase, ModeratorStats, UpdateCase, validate_evidence, validate_note,
+    validate_void_reason,
 };
 pub use postgres::PostgresModerationCaseStore;
 
@@ -156,26 +156,12 @@ impl ModerationCaseStore {
         match self {
             Self::Memory(store) => {
                 store
-                    .add_evidence(
-                        guild_id,
-                        case_number,
-                        author_user_id,
-                        label,
-                        value,
-                        now,
-                    )
+                    .add_evidence(guild_id, case_number, author_user_id, label, value, now)
                     .await
             }
             Self::Postgres(store) => {
                 store
-                    .add_evidence(
-                        guild_id,
-                        case_number,
-                        author_user_id,
-                        label,
-                        value,
-                        now,
-                    )
+                    .add_evidence(guild_id, case_number, author_user_id, label, value, now)
                     .await
             }
         }
@@ -231,24 +217,12 @@ impl ModerationCaseStore {
         match self {
             Self::Memory(store) => {
                 store
-                    .restore_case(
-                        guild_id,
-                        case_number,
-                        actor_user_id,
-                        expected_version,
-                        now,
-                    )
+                    .restore_case(guild_id, case_number, actor_user_id, expected_version, now)
                     .await
             }
             Self::Postgres(store) => {
                 store
-                    .restore_case(
-                        guild_id,
-                        case_number,
-                        actor_user_id,
-                        expected_version,
-                        now,
-                    )
+                    .restore_case(guild_id, case_number, actor_user_id, expected_version, now)
                     .await
             }
         }

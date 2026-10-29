@@ -35,7 +35,7 @@ A Lua script never receives the Discord bot token, raw database credentials, unr
 - controlled migration from the deprecated `dm_permission` manifest field
 - event dispatch for `message_create` and `guild_member_add`
 - sandboxed Lua 5.4 with memory and global instruction limits
-- validated action API for replies, messages, moderation, roles, purge, music, progression, persistent scheduling and audit events
+- validated action API for replies, messages, moderation, roles, purge, music, progression, persistent scheduling, private tickets and audit events
 - action-level Discord permission checks
 - bot, moderator and target role-hierarchy checks
 - Songbird voice connection and queue controls
@@ -44,8 +44,9 @@ A Lua script never receives the Discord bot token, raw database credentials, unr
 - per-guild module enable/disable and JSON configuration
 - HttpOnly sessions, OAuth2 state validation and CSRF protection
 - PostgreSQL migrations with an in-memory development fallback
-- audit records for privileged actions, scheduler transitions and dashboard changes
+- audit records for privileged actions, scheduler transitions, ticket lifecycles and dashboard changes
 - lease-based PostgreSQL scheduler with retries, pause/resume and an in-memory test fallback
+- transactional private-ticket workflows with queues, claim, participants, archive and transcripts
 - Docker Compose development deployment
 - CI formatting, linting, tests, release build and production-container build
 
@@ -62,6 +63,7 @@ Bundled Lua modules:
 | `automod.lua` | multi-rule message safety and anti-abuse engine |
 | `progression.lua` | XP, levels, coins, daily streaks, reputation and leaderboards |
 | `scheduler.lua` | persistent reminders and recurring server messages |
+| `tickets.lua` | private support tickets, queues, claim, archive and transcripts |
 | `community.lua` | suggestions, reports, feedback, applications and bug reports |
 | `utility.lua` | calculations, conversions, timestamps and Discord utilities |
 | `games.lua` | social games, dice, teams and cosmetic drops |
@@ -93,7 +95,7 @@ Lua sandbox      Action validator
 Discord OAuth2 web dashboard
 ```
 
-Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for trust boundaries and request flows.
+Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for trust boundaries and request flows. The scheduler contract is documented in [`docs/SCHEDULER.md`](docs/SCHEDULER.md), and the private support workflow in [`docs/TICKETS.md`](docs/TICKETS.md).
 
 ## Local development
 
@@ -197,7 +199,9 @@ The full manifest, context and action contract is documented in [`docs/LUA_API.m
 src/
   discord/       Discord events, command registration and action execution
   lua/           sandbox, manifests, contexts and action contract
-  storage/       PostgreSQL and in-memory stores
+  storage/       guild configuration, audit and module data stores
+  scheduler/     persistent jobs, leasing, retries and recurrence
+  tickets/       persistent support cases, participants and transcripts
   web/           OAuth2 dashboard and API
 scripts/         first-party Lua modules
 web/static/      dependency-free dashboard frontend

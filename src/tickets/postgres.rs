@@ -454,7 +454,7 @@ impl PostgresTicketStore {
             TicketMutation::Rename.event_name(),
             json!({ "channel_name": channel_name }),
             |ticket| {
-                if !ticket.is_open() {
+                if !ticket.is_open() && ticket.status != STATUS_CLOSED {
                     return Err(TicketMutationOutcome::InvalidState {
                         current_status: ticket.status.clone(),
                     });
@@ -721,14 +721,7 @@ impl PostgresTicketStore {
             return Ok(outcome);
         }
         write_ticket(&mut transaction, &ticket).await?;
-        insert_event(
-            &mut transaction,
-            &ticket,
-            actor_user_id,
-            event_type,
-            data,
-        )
-        .await?;
+        insert_event(&mut transaction, &ticket, actor_user_id, event_type, data).await?;
         transaction.commit().await?;
         Ok(TicketMutationOutcome::Updated(Box::new(ticket)))
     }
