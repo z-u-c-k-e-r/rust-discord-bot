@@ -18,6 +18,18 @@ use songbird::SerenityInit;
 use crate::AppState;
 
 pub async fn run(state: AppState) -> Result<()> {
+    if state.config.discord_token.starts_with("dummy")
+        || state.config.discord_token == "mock"
+        || state.config.discord_token == "offline"
+        || std::env::var("OFFLINE_MODE")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false)
+    {
+        tracing::warn!("offline/mock test mode active: skipping live Discord Gateway connection");
+        tokio::time::sleep(std::time::Duration::from_secs(86400 * 365)).await;
+        return Ok(());
+    }
+
     let intents = GatewayIntents::GUILDS
         | GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::GUILD_MESSAGE_REACTIONS
