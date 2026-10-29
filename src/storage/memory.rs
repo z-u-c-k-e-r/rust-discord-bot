@@ -16,8 +16,10 @@ type ReputationKey = (String, String);
 #[derive(Clone, Default)]
 pub struct MemoryStore {
     settings: Arc<DashMap<ModuleKey, GuildModuleSettings>>,
+    settings_lock: Arc<Mutex<()>>,
     audit_log: Arc<DashMap<u64, Value>>,
     next_audit_id: Arc<std::sync::atomic::AtomicU64>,
+    audit_failure_injected: Arc<std::sync::atomic::AtomicBool>,
     progression: Arc<DashMap<MemberKey, MemberProgress>>,
     reputation_cooldowns: Arc<DashMap<ReputationKey, chrono::DateTime<Utc>>>,
     progression_lock: Arc<Mutex<()>>,
@@ -53,6 +55,11 @@ impl MemoryStore {
         value
     }
 
+    pub fn inject_audit_failure(&self, fail: bool) {
+        self.audit_failure_injected
+            .store(fail, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub fn record_audit(
         &self,
         guild_id: Option<&str>,
@@ -60,8 +67,12 @@ impl MemoryStore {
         module_id: &str,
         event: &str,
         data: Value,
-    ) {
+    ) -> anyhow::Result<()> {
         use std::sync::atomic::Ordering;
+
+        if self.audit_failure_injected.load(Ordering::SeqCst) {
+            anyhow::bail!("simulated audit failure");
+        }
 
         let id = self.next_audit_id.fetch_add(1, Ordering::Relaxed);
         self.audit_log.insert(
@@ -75,6 +86,49 @@ impl MemoryStore {
                 "created_at": Utc::now(),
             }),
         );
+        Ok(())
+    }
+
+    pub fn update_module_settings_with_audit(
+        &self,
+        params: super::UpdateModuleSettingsParams<'_>,
+    ) -> anyhow::Result<GuildModuleSettings> {
+        let _guard = self
+            .settings_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let key = (params.guild_id.to_owned(), params.module_id.to_owned());
+        let previous = self.settings.get(&key).map(|entry| entry.value().clone());
+
+        let new_settings = GuildModuleSettings {
+            guild_id: params.guild_id.to_owned(),
+            module_id: params.module_id.to_owned(),
+            enabled: params.enabled,
+            config: params.config,
+            updated_at: Utc::now(),
+        };
+
+        self.settings.insert(key.clone(), new_settings.clone());
+
+        if let Err(audit_err) = self.record_audit(
+            Some(params.guild_id),
+            params.actor_id,
+            "dashboard",
+            params.audit_event,
+            params.audit_data,
+        ) {
+            match previous {
+                Some(prev) => {
+                    self.settings.insert(key, prev);
+                }
+                None => {
+                    self.settings.remove(&key);
+                }
+            }
+            return Err(audit_err);
+        }
+
+        Ok(new_settings)
     }
 
     pub fn get_member_progress(&self, guild_id: &str, user_id: &str) -> MemberProgress {

@@ -191,23 +191,18 @@ pub async fn update_guild_module(
     let settings = state
         .app
         .storage
-        .set_module_settings(&guild_id, &module_id, payload.enabled, payload.config)
-        .await
-        .map_err(|error| ApiError::internal(error.to_string()))?;
-
-    state
-        .app
-        .storage
-        .record_audit(
-            Some(&guild_id),
-            Some(&session.user.id),
-            "dashboard",
-            "module_settings_updated",
-            json!({
+        .update_module_settings_with_audit(crate::storage::UpdateModuleSettingsParams {
+            guild_id: &guild_id,
+            module_id: &module_id,
+            enabled: payload.enabled,
+            config: payload.config,
+            actor_id: Some(&session.user.id),
+            audit_event: "module_settings_updated",
+            audit_data: json!({
                 "module_id": module_id,
-                "enabled": settings.enabled,
+                "enabled": payload.enabled,
             }),
-        )
+        })
         .await
         .map_err(|error| ApiError::internal(error.to_string()))?;
 

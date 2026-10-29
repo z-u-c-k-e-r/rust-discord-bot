@@ -19,6 +19,17 @@ pub enum Storage {
     Postgres(PostgresStore),
 }
 
+#[derive(Clone, Debug)]
+pub struct UpdateModuleSettingsParams<'a> {
+    pub guild_id: &'a str,
+    pub module_id: &'a str,
+    pub enabled: bool,
+    pub config: Value,
+    pub actor_id: Option<&'a str>,
+    pub audit_event: &'a str,
+    pub audit_data: Value,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct GuildModuleSettings {
     pub guild_id: String,
@@ -71,6 +82,22 @@ impl Storage {
         }
     }
 
+    pub async fn update_module_settings_with_audit(
+        &self,
+        params: UpdateModuleSettingsParams<'_>,
+    ) -> anyhow::Result<GuildModuleSettings> {
+        match self {
+            Self::Memory(store) => store.update_module_settings_with_audit(params),
+            Self::Postgres(store) => store.update_module_settings_with_audit(params).await,
+        }
+    }
+
+    pub fn inject_audit_failure(&self, fail: bool) {
+        if let Self::Memory(store) = self {
+            store.inject_audit_failure(fail);
+        }
+    }
+
     pub async fn record_audit(
         &self,
         guild_id: Option<&str>,
@@ -80,10 +107,7 @@ impl Storage {
         data: Value,
     ) -> anyhow::Result<()> {
         match self {
-            Self::Memory(store) => {
-                store.record_audit(guild_id, actor_id, module_id, event, data);
-                Ok(())
-            }
+            Self::Memory(store) => store.record_audit(guild_id, actor_id, module_id, event, data),
             Self::Postgres(store) => {
                 store
                     .record_audit(guild_id, actor_id, module_id, event, data)
@@ -241,5 +265,96 @@ impl Storage {
             Self::Memory(store) => Ok(store.progression_leaderboard(guild_id, metric, limit)),
             Self::Postgres(store) => store.progression_leaderboard(guild_id, metric, limit).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_update_module_settings_with_audit_atomic_success_and_rollback() {
+        let store = Storage::Memory(MemoryStore::default());
+        let guild_id = "100000000000000001";
+        let module_id = "moderation";
+
+        // 1. Successful atomic update
+        let initial_config = serde_json::json!({"action": "log"});
+        let updated = store
+            .update_module_settings_with_audit(UpdateModuleSettingsParams {
+                guild_id,
+                module_id,
+                enabled: true,
+                config: initial_config.clone(),
+                actor_id: Some("admin_1"),
+                audit_event: "module_settings_updated",
+                audit_data: serde_json::json!({"module_id": module_id, "enabled": true}),
+            })
+            .await
+            .expect("update should succeed");
+        assert!(updated.enabled);
+        assert_eq!(updated.config, initial_config);
+
+        let fetched = store
+            .get_module_settings(guild_id, module_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.enabled);
+
+        // 2. Inject audit failure
+        store.inject_audit_failure(true);
+        let new_config = serde_json::json!({"action": "ban"});
+        let failed_result = store
+            .update_module_settings_with_audit(UpdateModuleSettingsParams {
+                guild_id,
+                module_id,
+                enabled: false,
+                config: new_config,
+                actor_id: Some("admin_1"),
+                audit_event: "module_settings_updated",
+                audit_data: serde_json::json!({"module_id": module_id, "enabled": false}),
+            })
+            .await;
+
+        assert!(failed_result.is_err());
+
+        // 3. Verify rollback: settings must remain exactly as before
+        let after_rollback = store
+            .get_module_settings(guild_id, module_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            after_rollback.enabled,
+            "module must still be enabled due to atomic rollback"
+        );
+        assert_eq!(
+            after_rollback.config, initial_config,
+            "config must remain unmutated"
+        );
+
+        // 4. Test unconfigured module fresh rollback
+        let unconfigured_mod = "automod";
+        let failed_fresh = store
+            .update_module_settings_with_audit(UpdateModuleSettingsParams {
+                guild_id,
+                module_id: unconfigured_mod,
+                enabled: true,
+                config: serde_json::json!({}),
+                actor_id: Some("admin_1"),
+                audit_event: "module_settings_updated",
+                audit_data: serde_json::json!({}),
+            })
+            .await;
+        assert!(failed_fresh.is_err());
+        let fetched_fresh = store
+            .get_module_settings(guild_id, unconfigured_mod)
+            .await
+            .unwrap();
+        assert!(
+            fetched_fresh.is_none(),
+            "unconfigured module settings must not exist after rollback"
+        );
     }
 }

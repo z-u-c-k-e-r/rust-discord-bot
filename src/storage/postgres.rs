@@ -72,6 +72,49 @@ impl PostgresStore {
         Ok(result)
     }
 
+    pub async fn update_module_settings_with_audit(
+        &self,
+        params: super::UpdateModuleSettingsParams<'_>,
+    ) -> anyhow::Result<GuildModuleSettings> {
+        let mut tx = self.pool.begin().await?;
+
+        let settings = sqlx::query_as::<_, GuildModuleSettings>(
+            r#"
+            INSERT INTO guild_module_settings (guild_id, module_id, enabled, config)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (guild_id, module_id)
+            DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                config = EXCLUDED.config,
+                updated_at = NOW()
+            RETURNING guild_id, module_id, enabled, config, updated_at
+            "#,
+        )
+        .bind(params.guild_id)
+        .bind(params.module_id)
+        .bind(params.enabled)
+        .bind(params.config)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO audit_events (guild_id, actor_id, module_id, event, data)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+        )
+        .bind(params.guild_id)
+        .bind(params.actor_id)
+        .bind("dashboard")
+        .bind(params.audit_event)
+        .bind(params.audit_data)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(settings)
+    }
+
     pub async fn record_audit(
         &self,
         guild_id: Option<&str>,
