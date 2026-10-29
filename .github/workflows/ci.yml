@@ -5,9 +5,6 @@ on:
   push:
     branches:
       - main
-      - feat/progression-economy
-      - feat/persistent-scheduler-reminders
-      - feat/ticket-support-workflows
 
 permissions:
   contents: read
@@ -22,6 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: zuckerbot
+          POSTGRES_USER: zuckerbot
+          POSTGRES_PASSWORD: zuckerbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zuckerbot -d zuckerbot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -35,20 +47,23 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Install voice build dependencies
+      - name: Install voice build and PostgreSQL dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential \
             cmake \
             libopus-dev \
-            pkg-config
+            pkg-config \
+            postgresql-client
 
       - name: Verify the project tracks the latest stable Rust release
         run: bash scripts/check-latest-rust.sh
 
-      - name: Resolve the pinned dependency graph
-        run: cargo generate-lockfile
+      - name: Verify authoritative committed Cargo.lock
+        run: |
+          cargo check --locked
+          git diff --exit-code Cargo.lock
 
       - name: Check formatting
         shell: bash
@@ -67,6 +82,34 @@ jobs:
         run: |
           set -o pipefail
           cargo test --locked --all-features 2>&1 | tee tests.log
+
+      - name: Validate PostgreSQL migrations
+        env:
+          PGPASSWORD: zuckerbot
+        shell: bash
+        run: |
+          set -euo pipefail
+          for migration in migrations/*.sql; do
+            echo "Applying ${migration}"
+            psql \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --username zuckerbot \
+              --dbname zuckerbot \
+              --set ON_ERROR_STOP=1 \
+              --file "${migration}"
+          done
+
+      - name: Validate dashboard JavaScript
+        run: node --check web/static/app.js
+
+      - name: Validate Docker Compose configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          trap 'rm -f .env' EXIT
+          docker compose -f compose.yaml config --quiet
 
       - name: Build release binary
         shell: bash
