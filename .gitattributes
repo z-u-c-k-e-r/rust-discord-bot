@@ -1,0 +1,14 @@
+# Enforce LF line endings across all platforms
+* text=auto eol=lf
+*.sh text eol=lf
+*.lua text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.sql text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
