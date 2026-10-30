@@ -97,10 +97,10 @@ The bot should not advertise a feature as complete until its Discord flow, dashb
 | Configurable default timeout | Implemented |
 | Warnings and moderator notes | Implemented |
 | Numbered moderation cases | Implemented |
-| Case edit and reason update | Planned |
+| Case edit and reason update | Implemented |
 | Temporary bans | Planned |
-| Soft bans | Planned |
-| Unban workflow | Planned |
+| Soft bans | Implemented |
+| Unban workflow | Implemented |
 | Mass-ban raid response | Planned |
 | Quarantine role | Planned |
 | Channel lockdown | Planned |

@@ -410,7 +410,11 @@ impl MemoryModerationCaseStore {
                 CaseKind::Timeout => result.timeout_cases += 1,
                 CaseKind::Kick => result.kick_cases += 1,
                 CaseKind::Ban => result.ban_cases += 1,
-                CaseKind::StaffNote | CaseKind::Unban | CaseKind::Automod | CaseKind::Other => {}
+                CaseKind::StaffNote
+                | CaseKind::Unban
+                | CaseKind::Softban
+                | CaseKind::Automod
+                | CaseKind::Other => {}
             }
         }
         Ok(result)

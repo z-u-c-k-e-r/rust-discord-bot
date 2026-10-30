@@ -262,6 +262,126 @@ async fn lua_moderation_module_emits_valid_case_actions() {
             ..
         }
     ));
+
+    // Test /case edit
+    let mut case_edit_ctx = ctx.clone();
+    case_edit_ctx.options = json!({
+        "action": "edit",
+        "case_number": 42,
+        "text": "Corrected case reason",
+        "version": 2
+    });
+    let edit_actions = engine
+        .execute_command("moderation", "case", case_edit_ctx)
+        .await
+        .unwrap();
+    let edit_op = edit_actions
+        .iter()
+        .find_map(|a| match a {
+            LuaAction::ModerationCase { operation } => Some(operation),
+            _ => None,
+        })
+        .expect("expected edit operation");
+    assert!(edit_op.validate().is_ok());
+    assert!(matches!(
+        edit_op,
+        ModerationCaseOperation::Edit {
+            case_number: 42,
+            expected_version: 2,
+            ..
+        }
+    ));
+
+    // Test /moderate softban
+    let mut softban_ctx = ctx.clone();
+    softban_ctx.options = json!({
+        "action": "softban",
+        "user": "5550001",
+        "reason": "Raid cleanup",
+        "severity": "high",
+        "points": 5
+    });
+    let softban_actions = engine
+        .execute_command("moderation", "moderate", softban_ctx)
+        .await
+        .unwrap();
+    let softban_op = softban_actions
+        .iter()
+        .find_map(|a| match a {
+            LuaAction::ModerationCase { operation } => Some(operation),
+            _ => None,
+        })
+        .expect("expected softban case operation");
+    assert!(softban_op.validate().is_ok());
+    assert!(matches!(
+        softban_op,
+        ModerationCaseOperation::Create {
+            kind,
+            reason,
+            ..
+        } if kind == "softban" && reason == "Raid cleanup"
+    ));
+
+    // Test /moderate unban
+    let mut unban_ctx = ctx.clone();
+    unban_ctx.options = json!({
+        "action": "unban",
+        "user": "5550001",
+        "reason": "Appeal accepted"
+    });
+    let unban_actions = engine
+        .execute_command("moderation", "moderate", unban_ctx)
+        .await
+        .unwrap();
+    let unban_op = unban_actions
+        .iter()
+        .find_map(|a| match a {
+            LuaAction::ModerationCase { operation } => Some(operation),
+            _ => None,
+        })
+        .expect("expected unban case operation");
+    assert!(unban_op.validate().is_ok());
+    assert!(matches!(
+        unban_op,
+        ModerationCaseOperation::Create {
+            kind,
+            reason,
+            ..
+        } if kind == "unban" && reason == "Appeal accepted"
+    ));
+}
+
+#[tokio::test]
+async fn softban_case_lifecycle_and_kind_serialization() {
+    let store = ModerationCaseStore::memory();
+    let now = Utc::now();
+    let created = store
+        .create_case(
+            CreateCase {
+                guild_id: 10,
+                subject_user_id: 20,
+                actor_user_id: 30,
+                kind: CaseKind::Softban,
+                severity: CaseSeverity::High,
+                points: 3,
+                reason: "Spam raid wipe".to_owned(),
+                source_module: "moderation".to_owned(),
+                visible_to_subject: true,
+                expires_at: None,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.kind, CaseKind::Softban);
+    assert_eq!(created.kind.as_str(), "softban");
+    assert_eq!("softban".parse::<CaseKind>().unwrap(), CaseKind::Softban);
+
+    let details = store.get_case(10, created.case_number, now).await.unwrap();
+    assert_eq!(details.case.kind, CaseKind::Softban);
+
+    let stats = store.stats(10, None, now).await.unwrap();
+    assert_eq!(stats.total_cases, 1);
 }
 
 #[tokio::test]

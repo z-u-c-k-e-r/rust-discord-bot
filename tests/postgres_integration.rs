@@ -282,6 +282,27 @@ async fn test_postgres_integration_suite() {
         .expect("get case details from PostgreSQL");
     assert_eq!(details.notes.len(), 1);
 
+    // Verify Softban case creation in PostgreSQL (0007 migration)
+    let softban_case = mod_store
+        .create_case(
+            CreateCase {
+                guild_id: 9990001,
+                subject_user_id: 1110002,
+                actor_user_id: 2220001,
+                kind: CaseKind::Softban,
+                severity: CaseSeverity::High,
+                points: 3,
+                reason: "PostgreSQL softban test".to_string(),
+                source_module: "moderation".to_string(),
+                visible_to_subject: true,
+                expires_at: None,
+            },
+            mod_now,
+        )
+        .await
+        .expect("create softban case in PostgreSQL");
+    assert_eq!(softban_case.kind, CaseKind::Softban);
+
     // Verify Audit log persistence and retrieval
     let audit_events = store.list_audit_events(&guild_id, 10).await.unwrap();
     assert!(!audit_events.is_empty());

@@ -9,7 +9,7 @@ Every case has two identifiers:
 - an internal UUID used by foreign keys;
 - a monotonically increasing, human-readable case number scoped to one Discord guild.
 
-A case records the guild, subject, moderator, action kind, status, severity, points, reason, source module, subject visibility, optional expiry, timestamps and optimistic-lock version. Supported action kinds are `warning`, `staff_note`, `timeout`, `kick`, `ban`, `unban`, `automod` and `other`.
+A case records the guild, subject, moderator, action kind, status, severity, points, reason, source module, subject visibility, optional expiry, timestamps and optimistic-lock version. Supported action kinds are `warning`, `staff_note`, `timeout`, `kick`, `ban`, `unban`, `softban`, `automod` and `other`.
 
 Statuses are:
 
@@ -65,7 +65,7 @@ Discord snowflakes are stored as decimal text to avoid signed 64-bit overflow an
 - `MemoryModerationCaseStore` for tests and volatile development;
 - `PostgresModerationCaseStore` for durable deployments.
 
-The PostgreSQL schema is added by `migrations/0005_moderation_cases.sql`. Migration validation must run against the repository's current PostgreSQL image before merge.
+The PostgreSQL schema is added by `migrations/0005_moderation_cases.sql` and updated by `migrations/0007_moderation_softban.sql`. Migration validation must run against the repository's current PostgreSQL image before merge.
 
 ## Security boundary
 
@@ -86,8 +86,11 @@ The control plane exposes moderation case management to authenticated guild mode
 
 - `GET /api/guilds/{guild_id}/cases` — query cases with status/subject/pagination filters;
 - `GET /api/guilds/{guild_id}/cases/{case_number}` — fetch case details, notes, evidence, and history;
+- `POST /api/guilds/{guild_id}/cases/{case_number}/notes` — append moderator or subject-visible notes;
+- `POST /api/guilds/{guild_id}/cases/{case_number}/void` — void case with required reason and version concurrency guard;
+- `PATCH /api/guilds/{guild_id}/cases/{case_number}` — update case reason, severity, points, and visibility;
 - `GET /api/guilds/{guild_id}/audit` — view searchable security and moderation audit trails;
-- Interactive web dashboard UI under the `Moderacja` and `Dziennik audytu` tabs with responsive cards, status badges, and real-time filtering.
+- Interactive web dashboard UI under the `Moderacja` and `Dziennik audytu` tabs with responsive cards, status badges, details drawer, inline note entry, void dialogs, and reason editing.
 
 ## Required verification
 

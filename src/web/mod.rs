@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::{
     Router,
-    routing::{get, post, put},
+    routing::{get, patch, post, put},
 };
 use dashmap::DashMap;
 use tokio::net::TcpListener;
@@ -77,6 +77,18 @@ pub async fn serve_with_shutdown(
         .route(
             "/api/guilds/{guild_id}/cases/{case_number}",
             get(routes::guild_case_details),
+        )
+        .route(
+            "/api/guilds/{guild_id}/cases/{case_number}/notes",
+            post(routes::add_guild_case_note),
+        )
+        .route(
+            "/api/guilds/{guild_id}/cases/{case_number}/void",
+            post(routes::void_guild_case),
+        )
+        .route(
+            "/api/guilds/{guild_id}/cases/{case_number}",
+            patch(routes::update_guild_case),
         )
         .route(
             "/api/guilds/{guild_id}/audit",

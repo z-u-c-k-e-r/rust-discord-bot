@@ -9,7 +9,7 @@ use serenity::{
 use crate::{
     AppState,
     lua::ModerationCaseOperation,
-    moderation_cases::{CaseFilter, CaseKind, CaseSeverity, CaseStatus, CreateCase},
+    moderation_cases::{CaseFilter, CaseKind, CaseSeverity, CaseStatus, CreateCase, UpdateCase},
 };
 
 #[derive(Clone, Copy)]
@@ -87,7 +87,58 @@ pub async fn execute(
                 .map_err(|_| anyhow!("niepoprawne ID użytkownika"))?;
             let target_user_id = UserId::new(subject_u64);
 
-            if execution.command_context {
+            let case_kind = match kind.as_str() {
+                "warning" => CaseKind::Warning,
+                "staff_note" => CaseKind::StaffNote,
+                "timeout" => CaseKind::Timeout,
+                "kick" => CaseKind::Kick,
+                "ban" => CaseKind::Ban,
+                "unban" => CaseKind::Unban,
+                "softban" => CaseKind::Softban,
+                "automod" => CaseKind::Automod,
+                _ => CaseKind::Other,
+            };
+
+            if matches!(
+                case_kind,
+                CaseKind::Ban | CaseKind::Unban | CaseKind::Softban
+            ) && !execution
+                .actor_permissions
+                .contains(Permissions::BAN_MEMBERS)
+                && !execution
+                    .actor_permissions
+                    .contains(Permissions::ADMINISTRATOR)
+            {
+                return Err(anyhow!(
+                    "brak uprawnienia BAN_MEMBERS do wykonania tej akcji"
+                ));
+            }
+            if case_kind == CaseKind::Kick
+                && !execution
+                    .actor_permissions
+                    .contains(Permissions::KICK_MEMBERS)
+                && !execution
+                    .actor_permissions
+                    .contains(Permissions::ADMINISTRATOR)
+            {
+                return Err(anyhow!(
+                    "brak uprawnienia KICK_MEMBERS do wykonania tej akcji"
+                ));
+            }
+            if case_kind == CaseKind::Timeout
+                && !execution
+                    .actor_permissions
+                    .contains(Permissions::MODERATE_MEMBERS)
+                && !execution
+                    .actor_permissions
+                    .contains(Permissions::ADMINISTRATOR)
+            {
+                return Err(anyhow!(
+                    "brak uprawnienia MODERATE_MEMBERS do wykonania tej akcji"
+                ));
+            }
+
+            if execution.command_context && case_kind != CaseKind::Unban {
                 crate::discord::executor::ensure_member_hierarchy(
                     ctx,
                     guild_id,
@@ -96,17 +147,6 @@ pub async fn execute(
                 )
                 .await?;
             }
-
-            let case_kind = match kind.as_str() {
-                "warning" => CaseKind::Warning,
-                "staff_note" => CaseKind::StaffNote,
-                "timeout" => CaseKind::Timeout,
-                "kick" => CaseKind::Kick,
-                "ban" => CaseKind::Ban,
-                "unban" => CaseKind::Unban,
-                "automod" => CaseKind::Automod,
-                _ => CaseKind::Other,
-            };
 
             let case_severity = match severity.as_str() {
                 "info" => CaseSeverity::Info,
@@ -139,6 +179,13 @@ pub async fn execute(
                 let _ = guild_id
                     .ban_with_reason(&ctx.http, target_user_id, 0, reason)
                     .await;
+            } else if case_kind == CaseKind::Softban {
+                let _ = guild_id
+                    .ban_with_reason(&ctx.http, target_user_id, 1, reason)
+                    .await;
+                let _ = guild_id.unban(&ctx.http, target_user_id).await;
+            } else if case_kind == CaseKind::Unban {
+                let _ = guild_id.unban(&ctx.http, target_user_id).await;
             }
 
             let created = state
@@ -451,6 +498,86 @@ pub async fn execute(
 
             Ok(Some(format!(
                 "Sprawa #{case_number} została unieważniona. Powód: {reason}"
+            )))
+        }
+
+        ModerationCaseOperation::Edit {
+            case_number,
+            expected_version,
+            reason,
+            severity,
+            points,
+            visible_to_subject,
+            duration_seconds,
+        } => {
+            if !is_mod {
+                return Err(anyhow!("brak uprawnień moderatorskich do edycji spraw"));
+            }
+
+            let version = if *expected_version <= 0 {
+                let current = state
+                    .moderation_cases
+                    .get_case(guild_id.get(), *case_number, now)
+                    .await
+                    .map_err(|err| anyhow!("nie znaleziono sprawy #{case_number}: {err}"))?;
+                current.case.version
+            } else {
+                *expected_version
+            };
+
+            let sev = severity.as_deref().map(|s| match s {
+                "info" => CaseSeverity::Info,
+                "low" => CaseSeverity::Low,
+                "medium" => CaseSeverity::Medium,
+                "high" => CaseSeverity::High,
+                "critical" => CaseSeverity::Critical,
+                _ => CaseSeverity::Medium,
+            });
+
+            let expires_at = duration_seconds.map(|secs| now + Duration::seconds(secs as i64));
+
+            let update = UpdateCase {
+                reason: reason.clone(),
+                severity: sev,
+                points: *points,
+                visible_to_subject: *visible_to_subject,
+                expires_at,
+                clear_expiry: false,
+            };
+
+            let updated = state
+                .moderation_cases
+                .update_case(
+                    guild_id.get(),
+                    *case_number,
+                    actor_id.get(),
+                    version,
+                    update,
+                    now,
+                )
+                .await
+                .map_err(|err| anyhow!("błąd aktualizacji sprawy: {err}"))?;
+
+            let _ = state
+                .storage
+                .record_audit(
+                    Some(&guild_id.get().to_string()),
+                    Some(&actor_id.get().to_string()),
+                    module_id,
+                    "case_edited",
+                    serde_json::json!({
+                        "case_number": case_number,
+                        "version": updated.version,
+                        "reason": reason,
+                        "severity": severity,
+                        "points": points,
+                    }),
+                )
+                .await;
+
+            Ok(Some(format!(
+                "✏️ Zaktualizowano sprawę moderacyjną **#{case_number}** (wersja {version}).",
+                version = updated.version
             )))
         }
 

@@ -12,14 +12,14 @@ return {
     manifest = {
         id = "moderation",
         name = "Moderation",
-        version = "0.3.0",
+        version = "0.4.0",
         description = "Bezpieczne akcje moderacyjne, trwałe numerowane sprawy (cases), ostrzeżenia i audyt.",
         category = "safety",
         default_enabled = true,
         commands = {
             {
                 name = "moderate",
-                description = "Wykonuje timeout, kick, ban albo czyszczenie wiadomości.",
+                description = "Wykonuje timeout, kick, ban, softban, unban albo czyszczenie wiadomości.",
                 integration_types = { "guild" },
                 contexts = { "guild" },
                 options = {
@@ -32,13 +32,15 @@ return {
                             { name = "Timeout", value = "timeout" },
                             { name = "Kick", value = "kick" },
                             { name = "Ban", value = "ban" },
+                            { name = "Softban", value = "softban" },
+                            { name = "Unban", value = "unban" },
                             { name = "Purge", value = "purge" },
                         },
                     },
                     {
                         type = "user",
                         name = "user",
-                        description = "Użytkownik dla timeout, kick albo ban.",
+                        description = "Użytkownik dla timeout, kick, ban, softban lub unban.",
                         required = false,
                     },
                     {
@@ -48,6 +50,14 @@ return {
                         required = false,
                         min_value = 1,
                         max_value = 2419200,
+                    },
+                    {
+                        type = "integer",
+                        name = "delete_days",
+                        description = "Dni historii wiadomości do usunięcia (0-7, dla softban i ban).",
+                        required = false,
+                        min_value = 0,
+                        max_value = 7,
                     },
                     {
                         type = "integer",
@@ -142,6 +152,7 @@ return {
                         choices = {
                             { name = "Podgląd sprawy", value = "view" },
                             { name = "Lista spraw", value = "list" },
+                            { name = "Edytuj sprawę", value = "edit" },
                             { name = "Dodaj notatkę", value = "note" },
                             { name = "Unieważnij sprawę", value = "void" },
                             { name = "Przywróć sprawę", value = "restore" },
@@ -259,6 +270,25 @@ return {
                             subject_user_id = user_id,
                             limit = 15,
                             visible_to_subject_only = false,
+                        },
+                    },
+                }
+            elseif action == "edit" then
+                local num = tonumber(ctx.options.case_number)
+                local text = ctx.options.text
+                if not num then
+                    return missing("Edycja wymaga podania numeru sprawy (case_number).")
+                end
+                local version = tonumber(ctx.options.version) or 0
+                return {
+                    accepted,
+                    {
+                        type = "moderation_case",
+                        operation = {
+                            type = "edit",
+                            case_number = num,
+                            reason = text,
+                            expected_version = version,
                         },
                     },
                 }
@@ -426,6 +456,42 @@ return {
                         reason = reason,
                         severity = severity,
                         points = points > 0 and points or 10,
+                        visible_to_subject = true,
+                    },
+                },
+            }
+        end
+
+        if action == "softban" then
+            return {
+                accepted,
+                {
+                    type = "moderation_case",
+                    operation = {
+                        type = "create",
+                        subject_user_id = user_id,
+                        kind = "softban",
+                        reason = reason,
+                        severity = severity,
+                        points = points > 0 and points or 3,
+                        visible_to_subject = true,
+                    },
+                },
+            }
+        end
+
+        if action == "unban" then
+            return {
+                accepted,
+                {
+                    type = "moderation_case",
+                    operation = {
+                        type = "create",
+                        subject_user_id = user_id,
+                        kind = "unban",
+                        reason = reason,
+                        severity = "info",
+                        points = 0,
                         visible_to_subject = true,
                     },
                 },

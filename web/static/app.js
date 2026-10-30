@@ -253,6 +253,7 @@ function renderCases(cases) {
   for (const c of cases) {
     const card = document.createElement("article");
     card.className = "case-card";
+    card.id = `case-card-${c.case_number}`;
 
     const badgeClass =
       c.status === "active"
@@ -264,18 +265,214 @@ function renderCases(cases) {
     card.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <strong>#${c.case_number} [${escapeHtml(c.kind)}]</strong>
-        <span class="case-badge ${badgeClass}">${escapeHtml(c.status)}</span>
+        <div>
+          <span class="case-badge ${badgeClass}">${escapeHtml(c.status)}</span>
+          <button type="button" class="case-action-btn toggle-details-btn" data-case="${c.case_number}" style="margin-left:8px;">Szczegóły</button>
+        </div>
       </div>
-      <p style="margin:4px 0 10px 0;"><strong>Powód:</strong> ${escapeHtml(c.reason)}</p>
-      <div style="display:flex; gap:16px; font-size:12px; color:var(--muted); flex-wrap:wrap;">
+      <p style="margin:4px 0 10px 0;"><strong>Powód:</strong> <span class="case-reason-text">${escapeHtml(c.reason)}</span></p>
+      <div style="display:flex; gap:16px; font-size:12px; color:var(--muted); flex-wrap:wrap; margin-bottom:8px;">
         <span>Użytkownik: <code>${escapeHtml(String(c.subject_user_id))}</code></span>
         <span>Moderator: <code>${escapeHtml(String(c.actor_user_id))}</code></span>
-        <span>Punkty: ${c.points}</span>
+        <span>Punkty: <strong class="case-points-text">${c.points}</strong></span>
         <span>Poziom: ${escapeHtml(c.severity)}</span>
         <span>Utworzono: ${formatDate(c.created_at)}</span>
       </div>
+      <div class="case-details-container" style="display:none; margin-top:12px; border-top:1px solid var(--border-soft); padding-top:12px;"></div>
     `;
+
+    const toggleBtn = card.querySelector(".toggle-details-btn");
+    const container = card.querySelector(".case-details-container");
+
+    toggleBtn.addEventListener("click", async () => {
+      if (container.style.display !== "none") {
+        container.style.display = "none";
+        toggleBtn.textContent = "Szczegóły";
+        return;
+      }
+      toggleBtn.textContent = "Ukryj";
+      container.style.display = "block";
+      await loadCaseDetails(c.case_number, container, c);
+    });
+
     ui.casesList.append(card);
+  }
+}
+
+async function loadCaseDetails(caseNumber, container, caseItem) {
+  container.innerHTML = `<p style="font-size:13px; color:var(--muted);">Ładowanie szczegółów sprawy...</p>`;
+  try {
+    const details = await request(`/api/guilds/${encodeURIComponent(state.guildId)}/cases/${caseNumber}`);
+    renderCaseDetailsContent(container, details, caseItem);
+  } catch (error) {
+    container.innerHTML = `<p style="color:var(--danger); font-size:13px;">Błąd pobierania szczegółów: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderCaseDetailsContent(container, details, caseItem) {
+  const c = details.case;
+  container.replaceChildren();
+
+  const notesHeader = document.createElement("h4");
+  notesHeader.style.margin = "8px 0";
+  notesHeader.textContent = `Notatki (${details.notes.length}):`;
+  container.append(notesHeader);
+
+  const notesList = document.createElement("div");
+  notesList.className = "case-notes-list";
+  notesList.style.display = "grid";
+  notesList.style.gap = "8px";
+  notesList.style.marginBottom = "12px";
+
+  if (details.notes.length === 0) {
+    const emptyNote = document.createElement("div");
+    emptyNote.style.fontSize = "13px";
+    emptyNote.style.color = "var(--muted)";
+    emptyNote.textContent = "Brak notatek do tej sprawy.";
+    notesList.append(emptyNote);
+  } else {
+    for (const note of details.notes) {
+      const noteEl = document.createElement("div");
+      noteEl.className = "case-note-item";
+      noteEl.innerHTML = `
+        <div style="font-size:11px; color:var(--muted); margin-bottom:2px;">
+          <span>${formatDate(note.created_at)} przez <code>${escapeHtml(String(note.author_user_id))}</code></span>
+          <span style="margin-left:6px; font-style:italic;">${note.visible_to_subject ? "[Widoczna dla ukaranego]" : "[Wewnętrzna]"}</span>
+        </div>
+        <p style="margin:0; font-size:13px;">${escapeHtml(note.body)}</p>
+      `;
+      notesList.append(noteEl);
+    }
+  }
+  container.append(notesList);
+
+  const addNoteForm = document.createElement("form");
+  addNoteForm.className = "case-add-note-form";
+  addNoteForm.style.display = "flex";
+  addNoteForm.style.gap = "8px";
+  addNoteForm.style.alignItems = "center";
+  addNoteForm.style.marginBottom = "16px";
+  addNoteForm.style.flexWrap = "wrap";
+  addNoteForm.innerHTML = `
+    <input type="text" placeholder="Dodaj notatkę moderatorską..." class="case-note-input text-input" style="flex:1; min-width:200px;" required />
+    <label style="font-size:12px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
+      <input type="checkbox" class="case-note-visible" /> Widoczna dla ukaranego
+    </label>
+    <button type="submit" class="case-action-btn btn-primary">Zapisz notatkę</button>
+  `;
+
+  addNoteForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = addNoteForm.querySelector(".case-note-input");
+    const visibleBox = addNoteForm.querySelector(".case-note-visible");
+    const bodyText = input.value.trim();
+    if (!bodyText) return;
+
+    try {
+      await request(`/api/guilds/${encodeURIComponent(state.guildId)}/cases/${c.case_number}/notes`, {
+        method: "POST",
+        body: JSON.stringify({
+          body: bodyText,
+          visible_to_subject: visibleBox.checked,
+        }),
+      });
+      setStatus(`Dodano notatkę do sprawy #${c.case_number}.`, "success");
+      await loadCaseDetails(c.case_number, container, c);
+    } catch (err) {
+      setStatus(`Błąd dodawania notatki: ${err.message}`, "error");
+    }
+  });
+  container.append(addNoteForm);
+
+  if (c.status === "active") {
+    const actionRow = document.createElement("div");
+    actionRow.style.display = "flex";
+    actionRow.style.gap = "10px";
+    actionRow.style.alignItems = "center";
+    actionRow.style.flexWrap = "wrap";
+    actionRow.style.paddingTop = "8px";
+    actionRow.style.borderTop = "1px solid var(--border-soft)";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "case-action-btn";
+    editBtn.textContent = "Edytuj powód i punkty";
+
+    const voidBtn = document.createElement("button");
+    voidBtn.type = "button";
+    voidBtn.className = "case-action-btn btn-danger";
+    voidBtn.textContent = "Unieważnij sprawę";
+
+    actionRow.append(editBtn, voidBtn);
+    container.append(actionRow);
+
+    const editContainer = document.createElement("div");
+    editContainer.style.display = "none";
+    editContainer.style.marginTop = "10px";
+    editContainer.innerHTML = `
+      <form class="case-edit-form" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="text" class="edit-reason-input text-input" value="${escapeHtml(c.reason)}" placeholder="Nowy powód..." style="flex:1; min-width:200px;" required />
+        <input type="number" class="edit-points-input text-input" value="${c.points}" placeholder="Punkty" style="width:80px;" min="0" max="10000" />
+        <button type="submit" class="case-action-btn btn-primary">Zapisz zmiany</button>
+      </form>
+    `;
+    editBtn.addEventListener("click", () => {
+      editContainer.style.display = editContainer.style.display === "none" ? "block" : "none";
+    });
+
+    editContainer.querySelector(".case-edit-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const newReason = editContainer.querySelector(".edit-reason-input").value.trim();
+      const newPoints = parseInt(editContainer.querySelector(".edit-points-input").value, 10);
+      try {
+        await request(`/api/guilds/${encodeURIComponent(state.guildId)}/cases/${c.case_number}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            expected_version: c.version,
+            reason: newReason,
+            points: isNaN(newPoints) ? c.points : newPoints,
+          }),
+        });
+        setStatus(`Zaktualizowano sprawę #${c.case_number}.`, "success");
+        await loadCases();
+      } catch (err) {
+        setStatus(`Błąd aktualizacji sprawy: ${err.message}`, "error");
+      }
+    });
+    container.append(editContainer);
+
+    const voidContainer = document.createElement("div");
+    voidContainer.style.display = "none";
+    voidContainer.style.marginTop = "10px";
+    voidContainer.innerHTML = `
+      <form class="case-void-form" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="text" class="void-reason-input text-input" placeholder="Powód unieważnienia (wymagany)..." style="flex:1; min-width:200px;" required />
+        <button type="submit" class="case-action-btn btn-danger">Potwierdź unieważnienie</button>
+      </form>
+    `;
+    voidBtn.addEventListener("click", () => {
+      voidContainer.style.display = voidContainer.style.display === "none" ? "block" : "none";
+    });
+
+    voidContainer.querySelector(".case-void-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const voidReason = voidContainer.querySelector(".void-reason-input").value.trim();
+      if (!voidReason) return;
+      try {
+        await request(`/api/guilds/${encodeURIComponent(state.guildId)}/cases/${c.case_number}/void`, {
+          method: "POST",
+          body: JSON.stringify({
+            expected_version: c.version,
+            reason: voidReason,
+          }),
+        });
+        setStatus(`Unieważniono sprawę #${c.case_number}.`, "success");
+        await loadCases();
+      } catch (err) {
+        setStatus(`Błąd unieważnienia sprawy: ${err.message}`, "error");
+      }
+    });
+    container.append(voidContainer);
   }
 }
 

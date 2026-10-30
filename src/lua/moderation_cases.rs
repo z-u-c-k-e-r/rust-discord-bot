@@ -45,6 +45,21 @@ pub enum ModerationCaseOperation {
         expected_version: i64,
         reason: String,
     },
+    Edit {
+        case_number: i64,
+        #[serde(default)]
+        expected_version: i64,
+        #[serde(default)]
+        reason: Option<String>,
+        #[serde(default)]
+        severity: Option<String>,
+        #[serde(default)]
+        points: Option<i32>,
+        #[serde(default)]
+        visible_to_subject: Option<bool>,
+        #[serde(default)]
+        duration_seconds: Option<u64>,
+    },
     Restore {
         case_number: i64,
         #[serde(default)]
@@ -133,6 +148,35 @@ impl ModerationCaseOperation {
                 validate_text(reason, 1, 2000, "void reason")?;
                 Ok(())
             }
+            Self::Edit {
+                case_number,
+                reason,
+                severity,
+                points,
+                duration_seconds,
+                ..
+            } => {
+                if *case_number < 1 {
+                    return Err("case number must be greater than zero".to_owned());
+                }
+                if let Some(r) = reason {
+                    validate_text(r, 1, 2000, "case reason")?;
+                }
+                if let Some(s) = severity {
+                    validate_severity(s)?;
+                }
+                if let Some(p) = points
+                    && !(0..=10_000).contains(p)
+                {
+                    return Err("case points must be between 0 and 10000".to_owned());
+                }
+                if let Some(duration) = duration_seconds
+                    && (*duration == 0 || *duration > 3653 * 24 * 3600)
+                {
+                    return Err("case duration exceeds allowed limit".to_owned());
+                }
+                Ok(())
+            }
             Self::Restore { case_number, .. } => {
                 if *case_number < 1 {
                     return Err("case number must be greater than zero".to_owned());
@@ -151,9 +195,8 @@ impl ModerationCaseOperation {
 
 fn validate_kind(kind: &str) -> Result<(), String> {
     match kind {
-        "warning" | "staff_note" | "timeout" | "kick" | "ban" | "unban" | "automod" | "other" => {
-            Ok(())
-        }
+        "warning" | "staff_note" | "timeout" | "kick" | "ban" | "unban" | "softban" | "automod"
+        | "other" => Ok(()),
         _ => Err(format!("unknown moderation case kind: {kind}")),
     }
 }

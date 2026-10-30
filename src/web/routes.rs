@@ -394,3 +394,231 @@ pub async fn guild_audit_events(
 
     Ok(Json(events))
 }
+
+#[derive(Deserialize)]
+pub struct AddCaseNotePayload {
+    pub body: String,
+    #[serde(default)]
+    pub visible_to_subject: bool,
+}
+
+#[derive(Deserialize)]
+pub struct VoidCasePayload {
+    pub reason: String,
+    #[serde(default)]
+    pub expected_version: i64,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateCasePayload {
+    #[serde(default)]
+    pub expected_version: i64,
+    pub reason: Option<String>,
+    pub severity: Option<String>,
+    pub points: Option<i32>,
+    pub visible_to_subject: Option<bool>,
+}
+
+pub async fn add_guild_case_note(
+    State(state): State<WebState>,
+    Path((guild_id, case_number)): Path<(String, i64)>,
+    headers: HeaderMap,
+    Json(payload): Json<AddCaseNotePayload>,
+) -> Result<Json<crate::moderation_cases::CaseNote>, ApiError> {
+    let (_, session) = authenticate(&state, &headers).await?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
+    verify_csrf(&headers, &session)?;
+
+    let trimmed = payload.body.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > crate::moderation_cases::MAX_NOTE_LENGTH {
+        return Err(ApiError::bad_request(
+            "Treść notatki nie może być pusta ani przekraczać 2000 znaków.",
+        ));
+    }
+
+    let guild_u64 = guild_id
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator serwera."))?;
+    let actor_u64 = session
+        .user
+        .id
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator użytkownika."))?;
+
+    let now = Utc::now();
+    let note = state
+        .app
+        .moderation_cases
+        .add_note(
+            guild_u64,
+            case_number,
+            actor_u64,
+            trimmed.to_owned(),
+            payload.visible_to_subject,
+            now,
+        )
+        .await
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+
+    let _ = state
+        .app
+        .storage
+        .record_audit(
+            Some(&guild_id),
+            Some(&session.user.id),
+            "dashboard",
+            "case_note_added",
+            json!({
+                "case_number": case_number,
+                "visible_to_subject": payload.visible_to_subject,
+            }),
+        )
+        .await;
+
+    Ok(Json(note))
+}
+
+pub async fn void_guild_case(
+    State(state): State<WebState>,
+    Path((guild_id, case_number)): Path<(String, i64)>,
+    headers: HeaderMap,
+    Json(payload): Json<VoidCasePayload>,
+) -> Result<Json<crate::moderation_cases::ModerationCase>, ApiError> {
+    let (_, session) = authenticate(&state, &headers).await?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
+    verify_csrf(&headers, &session)?;
+
+    let trimmed = payload.reason.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > crate::moderation_cases::MAX_REASON_LENGTH {
+        return Err(ApiError::bad_request(
+            "Powód unieważnienia nie może być pusty ani przekraczać 2000 znaków.",
+        ));
+    }
+
+    let guild_u64 = guild_id
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator serwera."))?;
+    let actor_u64 = session
+        .user
+        .id
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator użytkownika."))?;
+
+    let now = Utc::now();
+    let version = if payload.expected_version <= 0 {
+        let current = state
+            .app
+            .moderation_cases
+            .get_case(guild_u64, case_number, now)
+            .await
+            .map_err(|error| ApiError::not_found(error.to_string()))?;
+        current.case.version
+    } else {
+        payload.expected_version
+    };
+
+    let voided = state
+        .app
+        .moderation_cases
+        .void_case(
+            guild_u64,
+            case_number,
+            actor_u64,
+            version,
+            trimmed.to_owned(),
+            now,
+        )
+        .await
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+
+    let _ = state
+        .app
+        .storage
+        .record_audit(
+            Some(&guild_id),
+            Some(&session.user.id),
+            "dashboard",
+            "case_voided",
+            json!({
+                "case_number": case_number,
+                "reason": trimmed,
+            }),
+        )
+        .await;
+
+    Ok(Json(voided))
+}
+
+pub async fn update_guild_case(
+    State(state): State<WebState>,
+    Path((guild_id, case_number)): Path<(String, i64)>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateCasePayload>,
+) -> Result<Json<crate::moderation_cases::ModerationCase>, ApiError> {
+    let (_, session) = authenticate(&state, &headers).await?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
+    verify_csrf(&headers, &session)?;
+
+    let guild_u64 = guild_id
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator serwera."))?;
+    let actor_u64 = session
+        .user
+        .id
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator użytkownika."))?;
+
+    let now = Utc::now();
+    let version = if payload.expected_version <= 0 {
+        let current = state
+            .app
+            .moderation_cases
+            .get_case(guild_u64, case_number, now)
+            .await
+            .map_err(|error| ApiError::not_found(error.to_string()))?;
+        current.case.version
+    } else {
+        payload.expected_version
+    };
+
+    let sev = match payload.severity.as_deref() {
+        Some(s) => Some(
+            s.parse::<crate::moderation_cases::CaseSeverity>()
+                .map_err(|e| ApiError::bad_request(e.to_string()))?,
+        ),
+        None => None,
+    };
+
+    let update = crate::moderation_cases::UpdateCase {
+        reason: payload.reason,
+        severity: sev,
+        points: payload.points,
+        visible_to_subject: payload.visible_to_subject,
+        expires_at: None,
+        clear_expiry: false,
+    };
+
+    let updated = state
+        .app
+        .moderation_cases
+        .update_case(guild_u64, case_number, actor_u64, version, update, now)
+        .await
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+
+    let _ = state
+        .app
+        .storage
+        .record_audit(
+            Some(&guild_id),
+            Some(&session.user.id),
+            "dashboard",
+            "case_edited",
+            json!({
+                "case_number": case_number,
+                "version": updated.version,
+            }),
+        )
+        .await;
+
+    Ok(Json(updated))
+}

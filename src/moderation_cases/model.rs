@@ -23,6 +23,7 @@ pub enum CaseKind {
     Kick,
     Ban,
     Unban,
+    Softban,
     Automod,
     Other,
 }
@@ -37,6 +38,7 @@ impl CaseKind {
             Self::Kick => "kick",
             Self::Ban => "ban",
             Self::Unban => "unban",
+            Self::Softban => "softban",
             Self::Automod => "automod",
             Self::Other => "other",
         }
@@ -60,6 +62,7 @@ impl FromStr for CaseKind {
             "kick" => Ok(Self::Kick),
             "ban" => Ok(Self::Ban),
             "unban" => Ok(Self::Unban),
+            "softban" => Ok(Self::Softban),
             "automod" => Ok(Self::Automod),
             "other" => Ok(Self::Other),
             _ => Err(CaseError::Validation(format!(
