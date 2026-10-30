@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::{
     config::Config,
     lua::{LuaEngine, LuaLimits},
+    moderation_cases::ModerationCaseStore,
     scheduler::SchedulerStore,
     session::SessionStore,
     storage::Storage,
@@ -18,6 +19,7 @@ pub struct AppState {
     pub scheduler: SchedulerStore,
     pub storage: Storage,
     pub tickets: TicketStore,
+    pub moderation_cases: ModerationCaseStore,
     pub http_client: reqwest::Client,
     pub media_http_client: reqwest_songbird::Client,
     pub metrics: Arc<crate::metrics::Metrics>,
@@ -37,6 +39,7 @@ impl AppState {
         let storage = Storage::connect(config.database_url.as_deref()).await?;
         let scheduler = SchedulerStore::connect(config.database_url.as_deref()).await?;
         let tickets = TicketStore::connect(config.database_url.as_deref()).await?;
+        let moderation_cases = ModerationCaseStore::connect(config.database_url.as_deref()).await?;
         let sessions = SessionStore::connect(config.database_url.as_deref()).await?;
         let user_agent = concat!("ZuckerBot/", env!("CARGO_PKG_VERSION"));
         let http_client = reqwest::Client::builder().user_agent(user_agent).build()?;
@@ -72,6 +75,7 @@ impl AppState {
             scheduler,
             storage,
             tickets,
+            moderation_cases,
             http_client,
             media_http_client,
             metrics,

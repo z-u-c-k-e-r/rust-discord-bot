@@ -39,6 +39,17 @@ pub struct GuildModuleSettings {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AuditLogEntry {
+    pub id: i64,
+    pub guild_id: Option<String>,
+    pub actor_id: Option<String>,
+    pub module_id: String,
+    pub event: String,
+    pub data: Value,
+    pub created_at: DateTime<Utc>,
+}
+
 impl Storage {
     pub async fn connect(database_url: Option<&str>) -> anyhow::Result<Self> {
         match database_url {
@@ -120,6 +131,17 @@ impl Storage {
                     .record_audit(guild_id, actor_id, module_id, event, data)
                     .await
             }
+        }
+    }
+
+    pub async fn list_audit_events(
+        &self,
+        guild_id: &str,
+        limit: i64,
+    ) -> anyhow::Result<Vec<AuditLogEntry>> {
+        match self {
+            Self::Memory(store) => Ok(store.list_audit_events(guild_id, limit)),
+            Self::Postgres(store) => store.list_audit_events(guild_id, limit).await,
         }
     }
 

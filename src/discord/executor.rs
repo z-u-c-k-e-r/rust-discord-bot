@@ -16,7 +16,7 @@ use serenity::{
 
 use crate::{AppState, lua::LuaAction};
 
-use super::{music, progression, scheduler, tickets};
+use super::{moderation_cases, music, progression, scheduler, tickets};
 
 struct ActionOrigin {
     guild_id: Option<GuildId>,
@@ -189,7 +189,8 @@ fn action_rate_limit_scope(action: &LuaAction) -> Option<&'static str> {
         } => Some("music_play"),
         LuaAction::BanMember { .. }
         | LuaAction::KickMember { .. }
-        | LuaAction::DeleteMessage { .. } => Some("destructive_admin"),
+        | LuaAction::DeleteMessage { .. }
+        | LuaAction::ModerationCase { .. } => Some("destructive_admin"),
         _ => None,
     }
 }
@@ -484,6 +485,23 @@ async fn execute_action(
             )
             .await
         }
+        LuaAction::ModerationCase { operation } => {
+            moderation_cases::execute(
+                ctx,
+                state,
+                module_id,
+                moderation_cases::ModerationExecutionContext::new(
+                    origin.guild_id,
+                    origin.channel_id,
+                    origin.actor_id,
+                    origin.actor_permissions,
+                    origin.app_permissions,
+                    origin.enforce_actor_permissions,
+                ),
+                operation,
+            )
+            .await
+        }
         LuaAction::Audit { event, data } => {
             state
                 .storage
@@ -552,7 +570,7 @@ fn parse_snowflake(value: &str) -> Result<u64> {
     Ok(parsed)
 }
 
-async fn ensure_member_hierarchy(
+pub(crate) async fn ensure_member_hierarchy(
     ctx: &Context,
     guild_id: GuildId,
     actor_id: Option<UserId>,

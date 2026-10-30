@@ -22,6 +22,20 @@ pub enum ModerationCaseStore {
 }
 
 impl ModerationCaseStore {
+    pub async fn connect(database_url: Option<&str>) -> anyhow::Result<Self> {
+        match database_url {
+            Some(url) => Ok(Self::Postgres(
+                PostgresModerationCaseStore::connect(url).await?,
+            )),
+            None => {
+                tracing::warn!(
+                    "DATABASE_URL is not set; moderation cases are volatile and disappear on restart"
+                );
+                Ok(Self::Memory(MemoryModerationCaseStore::new()))
+            }
+        }
+    }
+
     #[must_use]
     pub fn memory() -> Self {
         Self::Memory(MemoryModerationCaseStore::new())

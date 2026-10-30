@@ -3,8 +3,8 @@ use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 
 use super::{
-    CoinTransfer, CoinTransferOutcome, DailyClaimOutcome, GuildModuleSettings, MemberProgress,
-    ProgressMetric, ReputationGrantOutcome, XpAward, level_for_xp,
+    AuditLogEntry, CoinTransfer, CoinTransferOutcome, DailyClaimOutcome, GuildModuleSettings,
+    MemberProgress, ProgressMetric, ReputationGrantOutcome, XpAward, level_for_xp,
 };
 
 #[derive(Clone)]
@@ -143,6 +143,28 @@ impl PostgresStore {
         .await?;
 
         Ok(())
+    }
+
+    pub async fn list_audit_events(
+        &self,
+        guild_id: &str,
+        limit: i64,
+    ) -> anyhow::Result<Vec<AuditLogEntry>> {
+        let rows = sqlx::query_as::<_, AuditLogEntry>(
+            r#"
+            SELECT id, guild_id, actor_id, module_id, event, data, created_at
+            FROM audit_events
+            WHERE guild_id = $1
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(guild_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
     }
 
     pub async fn get_member_progress(

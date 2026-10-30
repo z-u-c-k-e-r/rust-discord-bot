@@ -69,16 +69,25 @@ The PostgreSQL schema is added by `migrations/0005_moderation_cases.sql`. Migrat
 
 ## Security boundary
 
-This milestone deliberately separates durable case storage from Discord/Lua authorization. The persistence layer accepts already-authorized actor and subject identifiers but never performs Discord actions. The subsequent command integration must enforce, in Rust:
+The durable case storage is decoupled from Discord/Lua authorization. The persistence layer accepts authorized actor and subject identifiers. The command and Lua execution layer in Rust enforces:
 
 - guild context;
-- moderator permissions and configured staff roles;
+- moderator permissions (`MODERATE_MEMBERS`, `KICK_MEMBERS`, `BAN_MEMBERS`, `MANAGE_MESSAGES`, `ADMINISTRATOR`) and configured staff roles;
 - target role hierarchy;
-- subject-only filtering for self-service views;
-- capability grants for every Lua module;
-- audit records for every privileged operation.
+- subject-only filtering for self-service views (non-staff callers can only view cases where they are the subject and `visible_to_subject` is true, without internal staff notes);
+- capability grants and strict schema validation for every Lua action;
+- audit records in the database audit log for every case creation, note, void, and restore operation.
 
-Lua will only submit typed case operations. It will not receive SQL access, database credentials or an unrestricted repository handle.
+Lua submits typed case operations (`LuaAction::ModerationCase`). Lua does not receive SQL access, database credentials or an unrestricted repository handle.
+
+## Web Dashboard & API
+
+The control plane exposes moderation case management to authenticated guild moderators:
+
+- `GET /api/guilds/{guild_id}/cases` — query cases with status/subject/pagination filters;
+- `GET /api/guilds/{guild_id}/cases/{case_number}` — fetch case details, notes, evidence, and history;
+- `GET /api/guilds/{guild_id}/audit` — view searchable security and moderation audit trails;
+- Interactive web dashboard UI under the `Moderacja` and `Dziennik audytu` tabs with responsive cards, status badges, and real-time filtering.
 
 ## Required verification
 

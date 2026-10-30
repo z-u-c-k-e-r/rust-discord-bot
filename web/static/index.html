@@ -20,12 +20,12 @@
       </a>
 
       <nav class="nav" aria-label="Nawigacja">
-        <a class="nav-item active" href="#modules">Moduły</a>
+        <a class="nav-item active" href="#modules" id="nav-modules">Moduły</a>
+        <a class="nav-item" href="#moderation" id="nav-moderation">Moderacja</a>
+        <a class="nav-item" href="#audit" id="nav-audit">Dziennik audytu</a>
         <span class="nav-item disabled">Automatyzacje</span>
-        <span class="nav-item disabled">Moderacja</span>
         <span class="nav-item disabled">Muzyka</span>
         <span class="nav-item disabled">Analityka</span>
-        <span class="nav-item disabled">Dziennik audytu</span>
       </nav>
 
       <div class="sidebar-footer">
@@ -86,7 +86,25 @@
           </div>
         </div>
 
-        <section id="modules" class="module-grid" aria-live="polite"></section>
+        <section id="view-modules" class="tab-pane">
+          <section id="modules" class="module-grid" aria-live="polite"></section>
+        </section>
+
+        <section id="view-moderation" class="tab-pane hidden">
+          <div class="panel-header">
+            <h2>Sprawy moderacyjne</h2>
+            <p>Trwały rejestr sankcji, ostrzeżeń, notatek zespołu i dowodów z kontrolą wersji.</p>
+          </div>
+          <div id="cases-list" class="cases-grid" aria-live="polite"></div>
+        </section>
+
+        <section id="view-audit" class="tab-pane hidden">
+          <div class="panel-header">
+            <h2>Dziennik zdarzeń audytowych</h2>
+            <p>Chronologiczna historia operacji administracyjnych, zmian konfiguracji i egzekucji zasad.</p>
+          </div>
+          <div id="audit-list" class="audit-table-wrap" aria-live="polite"></div>
+        </section>
       </section>
     </main>
   </div>

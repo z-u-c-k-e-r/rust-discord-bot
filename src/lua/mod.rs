@@ -1,5 +1,6 @@
 mod engine;
 mod model;
+mod moderation_cases;
 mod progression;
 mod scheduler;
 mod tickets;
@@ -10,6 +11,7 @@ pub use model::{
     LuaInstallationContext, LuaInteractionContext, LuaModuleManifest, LuaOptionKind,
     MusicOperation,
 };
+pub use moderation_cases::ModerationCaseOperation;
 pub use progression::{ProgressionMetric, ProgressionOperation};
 pub use scheduler::{SchedulerOperation, SchedulerScope};
 pub use tickets::{

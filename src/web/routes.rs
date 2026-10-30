@@ -324,3 +324,73 @@ pub async fn update_guild_module(
         updated_at: Some(settings.updated_at),
     }))
 }
+
+pub async fn guild_cases(
+    State(state): State<WebState>,
+    Path(guild_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::moderation_cases::ModerationCase>>, ApiError> {
+    let (_, session) = authenticate(&state, &headers).await?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
+    let guild_u64 = guild_id
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator serwera."))?;
+    let cases = state
+        .app
+        .moderation_cases
+        .list_cases(
+            guild_u64,
+            crate::moderation_cases::CaseFilter {
+                subject_user_id: None,
+                actor_user_id: None,
+                kind: None,
+                status: None,
+                visible_to_subject_only: false,
+                limit: 50,
+            },
+            Utc::now(),
+        )
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+
+    Ok(Json(cases))
+}
+
+pub async fn guild_case_details(
+    State(state): State<WebState>,
+    Path((guild_id, case_number)): Path<(String, i64)>,
+    headers: HeaderMap,
+) -> Result<Json<crate::moderation_cases::CaseDetails>, ApiError> {
+    let (_, session) = authenticate(&state, &headers).await?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
+    let guild_u64 = guild_id
+        .parse::<u64>()
+        .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator serwera."))?;
+    let details = state
+        .app
+        .moderation_cases
+        .get_case(guild_u64, case_number, Utc::now())
+        .await
+        .map_err(|error| {
+            ApiError::not_found(format!("Nie znaleziono sprawy #{case_number}: {error}"))
+        })?;
+
+    Ok(Json(details))
+}
+
+pub async fn guild_audit_events(
+    State(state): State<WebState>,
+    Path(guild_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::storage::AuditLogEntry>>, ApiError> {
+    let (_, session) = authenticate(&state, &headers).await?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
+    let events = state
+        .app
+        .storage
+        .list_audit_events(&guild_id, 100)
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+
+    Ok(Json(events))
+}

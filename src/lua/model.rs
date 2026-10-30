@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    progression::ProgressionOperation, scheduler::SchedulerOperation, tickets::TicketOperation,
+    moderation_cases::ModerationCaseOperation, progression::ProgressionOperation,
+    scheduler::SchedulerOperation, tickets::TicketOperation,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -247,6 +248,9 @@ pub enum LuaAction {
     Ticket {
         operation: TicketOperation,
     },
+    ModerationCase {
+        operation: ModerationCaseOperation,
+    },
     Audit {
         event: String,
         #[serde(default)]
@@ -329,6 +333,7 @@ impl LuaAction {
             Self::Progression { operation } => operation.validate(),
             Self::Scheduler { operation } => operation.validate(),
             Self::Ticket { operation } => operation.validate(),
+            Self::ModerationCase { operation } => operation.validate(),
             Self::Audit { event, .. } => {
                 if event.trim().is_empty() || event.len() > 64 {
                     return Err("audit event must contain 1 to 64 bytes".to_owned());

@@ -138,3 +138,155 @@ async fn expired_cases_stop_contributing_to_active_stats() {
         .unwrap();
     assert_eq!(details.case.status, CaseStatus::Expired);
 }
+
+#[tokio::test]
+async fn lua_moderation_module_emits_valid_case_actions() {
+    use serde_json::json;
+    use std::path::PathBuf;
+    use zuckerbot::lua::{
+        LuaAction, LuaEngine, LuaExecutionContext, LuaLimits, ModerationCaseOperation,
+    };
+
+    let engine = LuaEngine::load(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts"),
+        LuaLimits {
+            memory_bytes: 4 * 1024 * 1024,
+            instruction_limit: 300_000,
+            hook_granularity: 100,
+        },
+    )
+    .expect("scripts should load");
+
+    let ctx = LuaExecutionContext {
+        guild_id: Some("100000000000000001".to_owned()),
+        channel_id: "100000000000000002".to_owned(),
+        user_id: "100000000000000003".to_owned(),
+        user_name: "ModUser".to_owned(),
+        member_roles: Vec::new(),
+        member_permissions: "8".to_owned(), // Administrator
+        locale: "pl".to_owned(),
+        options: json!({
+            "user": "100000000000000004",
+            "reason": "Test warning reason",
+            "severity": "high",
+            "points": 3
+        }),
+        config: json!({
+            "default_timeout_seconds": 600
+        }),
+    };
+
+    let actions = engine
+        .execute_command("moderation", "warn", ctx.clone())
+        .await
+        .unwrap();
+    assert_eq!(actions.len(), 2);
+    assert!(matches!(&actions[0], LuaAction::Reply { .. }));
+    let case_action = actions
+        .iter()
+        .find_map(|a| match a {
+            LuaAction::ModerationCase { operation } => Some(operation),
+            _ => None,
+        })
+        .expect("expected ModerationCase action");
+
+    assert!(case_action.validate().is_ok());
+    match case_action {
+        ModerationCaseOperation::Create {
+            subject_user_id,
+            kind,
+            reason,
+            severity,
+            points,
+            visible_to_subject,
+            ..
+        } => {
+            assert_eq!(subject_user_id, "100000000000000004");
+            assert_eq!(kind, "warning");
+            assert_eq!(reason, "Test warning reason");
+            assert_eq!(severity, "high");
+            assert_eq!(*points, 3);
+            assert!(visible_to_subject);
+        }
+        other => panic!("unexpected operation: {other:?}"),
+    }
+
+    // Test /case view
+    let mut case_view_ctx = ctx.clone();
+    case_view_ctx.options = json!({
+        "action": "view",
+        "case_number": 42
+    });
+    let view_actions = engine
+        .execute_command("moderation", "case", case_view_ctx)
+        .await
+        .unwrap();
+    let view_op = view_actions
+        .iter()
+        .find_map(|a| match a {
+            LuaAction::ModerationCase { operation } => Some(operation),
+            _ => None,
+        })
+        .expect("expected view operation");
+    assert!(view_op.validate().is_ok());
+    assert!(matches!(
+        view_op,
+        ModerationCaseOperation::View { case_number: 42 }
+    ));
+
+    // Test /case void
+    let mut case_void_ctx = ctx.clone();
+    case_void_ctx.options = json!({
+        "action": "void",
+        "case_number": 42,
+        "text": "Mistaken identity",
+        "version": 1
+    });
+    let void_actions = engine
+        .execute_command("moderation", "case", case_void_ctx)
+        .await
+        .unwrap();
+    let void_op = void_actions
+        .iter()
+        .find_map(|a| match a {
+            LuaAction::ModerationCase { operation } => Some(operation),
+            _ => None,
+        })
+        .expect("expected void operation");
+    assert!(void_op.validate().is_ok());
+    assert!(matches!(
+        void_op,
+        ModerationCaseOperation::Void {
+            case_number: 42,
+            expected_version: 1,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn moderation_case_store_connect_and_audit_logging() {
+    use zuckerbot::storage::Storage;
+
+    let store = ModerationCaseStore::connect(None).await.unwrap();
+    let now = Utc::now();
+    let created = store.create_case(warning(now), now).await.unwrap();
+    assert_eq!(created.case_number, 1);
+
+    let storage = Storage::connect(None).await.unwrap();
+    storage
+        .record_audit(
+            Some("10"),
+            Some("30"),
+            "moderation",
+            "case_created",
+            serde_json::json!({ "case_number": 1 }),
+        )
+        .await
+        .unwrap();
+
+    let logs = storage.list_audit_events("10", 10).await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].event, "case_created");
+    assert_eq!(logs[0].actor_id.as_deref(), Some("30"));
+}

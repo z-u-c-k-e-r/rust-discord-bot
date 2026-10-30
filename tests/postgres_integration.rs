@@ -2,6 +2,7 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 use uuid::Uuid;
 use zuckerbot::{
+    moderation_cases::{CaseKind, CaseSeverity, CreateCase, ModerationCaseStore},
     scheduler::{
         CreateJobOutcome, JobMutation, JobMutationOutcome, NewScheduledJob, SchedulerStore,
     },
@@ -236,4 +237,53 @@ async fn test_postgres_integration_suite() {
     // Test session logout deletion
     sessions.delete_session(&session_id).await.unwrap();
     assert!(sessions.get_session(&session_id).await.unwrap().is_none());
+
+    // 6. Test ModerationCaseStore and Audit Log in PostgreSQL
+    let mod_store = ModerationCaseStore::connect(Some(&database_url))
+        .await
+        .expect("ModerationCaseStore should connect to Postgres");
+    let mod_now = Utc::now();
+    let mod_case = mod_store
+        .create_case(
+            CreateCase {
+                guild_id: 9990001,
+                subject_user_id: 1110001,
+                actor_user_id: 2220001,
+                kind: CaseKind::Warning,
+                severity: CaseSeverity::High,
+                points: 5,
+                reason: "PostgreSQL integration test warning".to_string(),
+                source_module: "moderation".to_string(),
+                visible_to_subject: true,
+                expires_at: Some(mod_now + Duration::days(7)),
+            },
+            mod_now,
+        )
+        .await
+        .expect("create moderation case in PostgreSQL");
+    assert!(mod_case.case_number >= 1);
+    assert_eq!(mod_case.points, 5);
+
+    mod_store
+        .add_note(
+            9990001,
+            mod_case.case_number,
+            2220001,
+            "Postgres test note".to_string(),
+            true,
+            mod_now,
+        )
+        .await
+        .expect("add note in PostgreSQL");
+
+    let details = mod_store
+        .get_case(9990001, mod_case.case_number, mod_now)
+        .await
+        .expect("get case details from PostgreSQL");
+    assert_eq!(details.notes.len(), 1);
+
+    // Verify Audit log persistence and retrieval
+    let audit_events = store.list_audit_events(&guild_id, 10).await.unwrap();
+    assert!(!audit_events.is_empty());
+    assert_eq!(audit_events[0].module_id, "test_module");
 }

@@ -95,8 +95,8 @@ The bot should not advertise a feature as complete until its Discord flow, dashb
 | Privileged action audit | Implemented |
 | Example blocked-word AutoMod module | Implemented |
 | Configurable default timeout | Implemented |
-| Warnings and moderator notes | Planned |
-| Numbered moderation cases | Foundation |
+| Warnings and moderator notes | Implemented |
+| Numbered moderation cases | Implemented |
 | Case edit and reason update | Planned |
 | Temporary bans | Planned |
 | Soft bans | Planned |
@@ -121,7 +121,7 @@ The bot should not advertise a feature as complete until its Discord flow, dashb
 | Native Discord AutoMod rule synchronization | Planned |
 | Verification gate | Planned |
 | CAPTCHA provider integration | Research |
-| Moderator dashboard case queue | Planned |
+| Moderator dashboard case queue | Implemented |
 | Evidence snapshots | Planned |
 | Modmail | Planned |
 | Appeals portal | Planned |
@@ -145,10 +145,10 @@ The bot should not advertise a feature as complete until its Discord flow, dashb
 | Channel and guild setting logs | Planned |
 | Invite usage tracking | Planned |
 | Bot command usage logs | Planned |
-| Searchable audit dashboard | Planned |
+| Searchable audit dashboard | Implemented |
 | Audit retention policies | Planned |
 | Privacy redaction policies | Planned |
-| Prometheus metrics | Planned |
+| Prometheus metrics | Implemented |
 | OpenTelemetry traces | Planned |
 | Error tracking integration | Planned |
 | Health and readiness endpoints | Implemented |

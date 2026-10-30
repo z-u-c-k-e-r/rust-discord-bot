@@ -1,6 +1,7 @@
 mod commands;
 mod executor;
 mod handler;
+pub mod moderation_cases;
 pub mod music;
 mod progression;
 mod scheduler;

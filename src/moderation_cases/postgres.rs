@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
+use sqlx::{
+    PgPool, Postgres, Row, Transaction,
+    postgres::{PgPoolOptions, PgRow},
+};
 use uuid::Uuid;
 
 use super::{
@@ -15,6 +18,15 @@ pub struct PostgresModerationCaseStore {
 }
 
 impl PostgresModerationCaseStore {
+    pub async fn connect(database_url: &str) -> anyhow::Result<Self> {
+        let pool = PgPoolOptions::new()
+            .max_connections(8)
+            .connect(database_url)
+            .await?;
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        Ok(Self { pool })
+    }
+
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self { pool }

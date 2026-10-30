@@ -5,8 +5,8 @@ use dashmap::DashMap;
 use serde_json::Value;
 
 use super::{
-    CoinTransfer, CoinTransferOutcome, DailyClaimOutcome, GuildModuleSettings, MemberProgress,
-    ProgressMetric, ReputationGrantOutcome, XpAward, level_for_xp,
+    AuditLogEntry, CoinTransfer, CoinTransferOutcome, DailyClaimOutcome, GuildModuleSettings,
+    MemberProgress, ProgressMetric, ReputationGrantOutcome, XpAward, level_for_xp,
 };
 
 type ModuleKey = (String, String);
@@ -78,6 +78,7 @@ impl MemoryStore {
         self.audit_log.insert(
             id,
             serde_json::json!({
+                "id": id as i64,
                 "guild_id": guild_id,
                 "actor_id": actor_id,
                 "module_id": module_id,
@@ -87,6 +88,30 @@ impl MemoryStore {
             }),
         );
         Ok(())
+    }
+
+    pub fn list_audit_events(&self, guild_id: &str, limit: i64) -> Vec<AuditLogEntry> {
+        let mut entries: Vec<AuditLogEntry> = self
+            .audit_log
+            .iter()
+            .filter_map(|entry| {
+                let val = entry.value();
+                let gid = val.get("guild_id").and_then(|v| v.as_str())?;
+                if gid != guild_id {
+                    return None;
+                }
+                serde_json::from_value(val.clone()).ok()
+            })
+            .collect();
+        entries.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.id.cmp(&a.id))
+        });
+        if limit > 0 && entries.len() > limit as usize {
+            entries.truncate(limit as usize);
+        }
+        entries
     }
 
     pub fn update_module_settings_with_audit(

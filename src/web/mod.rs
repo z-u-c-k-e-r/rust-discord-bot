@@ -73,6 +73,15 @@ pub async fn serve_with_shutdown(
             "/api/guilds/{guild_id}/modules/{module_id}",
             put(routes::update_guild_module),
         )
+        .route("/api/guilds/{guild_id}/cases", get(routes::guild_cases))
+        .route(
+            "/api/guilds/{guild_id}/cases/{case_number}",
+            get(routes::guild_case_details),
+        )
+        .route(
+            "/api/guilds/{guild_id}/audit",
+            get(routes::guild_audit_events),
+        )
         .with_state(state);
 
     let listener = TcpListener::bind(bind).await?;

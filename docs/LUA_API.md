@@ -281,6 +281,23 @@ A URL must use HTTPS and match `MUSIC_ALLOWED_HOSTS`. Plain text is treated as a
 
 The event name must contain 1–64 bytes. Audit data is stored as JSON.
 
+### Moderation case
+
+```lua
+{
+    type = "moderation_case",
+    operation = "create", -- "create", "view", "list", "add_note", "add_evidence", "void", "restore", "stats"
+    subject_id = "123",
+    action_kind = "warning", -- "warning", "staff_note", "timeout", "kick", "ban", "unban", "automod", "other"
+    severity = "medium",     -- "low", "medium", "high", "critical"
+    points = 10,
+    reason = "Spamming invites",
+    visible_to_subject = true,
+}
+```
+
+Moderation cases manage persistent case history, staff notes, and points with Discord hierarchy checks, staff permission gates, and audit trails. Available operations: `create`, `view`, `list`, `add_note`, `add_evidence`, `void`, `restore`, `stats`. Non-staff members requesting case information can only see cases where they are the subject and where `visible_to_subject` is true.
+
 ## Built-in helper API
 
 The global `zuckerbot` table contains safe pure helpers:
