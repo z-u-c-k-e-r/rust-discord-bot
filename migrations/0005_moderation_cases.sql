@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS moderation_cases CASCADE;
+
 CREATE TABLE IF NOT EXISTS moderation_case_counters (
     guild_id TEXT PRIMARY KEY,
     next_case_number BIGINT NOT NULL CHECK (next_case_number >= 1)
