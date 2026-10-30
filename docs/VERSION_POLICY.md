@@ -25,7 +25,7 @@ ZuckerBot tracks current stable releases rather than intentionally remaining on 
 
 | Component | Version/channel |
 | --- | --- |
-| Rust | 1.98.0 |
+| Rust | 1.99.1 |
 | Rust edition | 2024 |
 | Discord API | v10 |
 | Serenity | 0.12.5 |

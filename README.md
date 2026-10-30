@@ -101,7 +101,7 @@ Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for trust boundaries and req
 
 ### Requirements
 
-- Rust 1.98.0; CI verifies that the pinned toolchain matches Rust's current stable channel
+- Rust 1.99.1; CI verifies that the pinned toolchain matches Rust's current stable channel
 - PostgreSQL 18.6 through the supplied Compose stack, unless using the volatile in-memory fallback
 - a Discord application with a bot user
 - `ffmpeg`, `yt-dlp` and Opus runtime support for music

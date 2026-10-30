@@ -7,7 +7,7 @@ pinned="$(
 )"
 
 if [[ ! "${pinned}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "rust-toolchain.toml must pin an exact stable version, for example 1.98.0." >&2
+  echo "rust-toolchain.toml must pin an exact stable version, for example 1.99.1." >&2
   exit 1
 fi
 

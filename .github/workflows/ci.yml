@@ -42,7 +42,7 @@ jobs:
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.98.0
+          toolchain: 1.99.1
           components: rustfmt, clippy
 
       - name: Cache Rust build
@@ -169,7 +169,7 @@ jobs:
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.98.0
+          toolchain: 1.99.1
 
       - name: Cache cargo deny
         uses: Swatinem/rust-cache@v2

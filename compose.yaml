@@ -20,7 +20,7 @@ services:
     build:
       context: .
       args:
-        RUST_VERSION: 1.98.0
+        RUST_VERSION: 1.99.1
         DEBIAN_SUITE: trixie
         YT_DLP_VERSION: 2026.08.19
         YT_DLP_SHA256: 1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6

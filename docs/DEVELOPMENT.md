@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-The repository pins Rust 1.98.0 through `rust-toolchain.toml`. CI verifies that this exact version matches Rust's official stable channel before compiling the project.
+The repository pins Rust 1.99.1 through `rust-toolchain.toml`. CI verifies that this exact version matches Rust's official stable channel before compiling the project.
 
 System packages commonly required on Debian/Ubuntu:
 
