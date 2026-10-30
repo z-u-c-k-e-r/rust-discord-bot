@@ -285,5 +285,7 @@ async fn test_postgres_integration_suite() {
     // Verify Audit log persistence and retrieval
     let audit_events = store.list_audit_events(&guild_id, 10).await.unwrap();
     assert!(!audit_events.is_empty());
-    assert_eq!(audit_events[0].module_id, "test_module");
+    assert_eq!(audit_events[0].module_id, "dashboard");
+    assert_eq!(audit_events[0].event, "module_config_updated");
+    assert_eq!(audit_events[0].data["reason"], "integration_test");
 }
