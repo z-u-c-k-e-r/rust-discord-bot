@@ -8,7 +8,10 @@ use std::{
     },
 };
 
-use mlua::{Error as MluaError, Function, HookTriggers, Lua, LuaSerdeExt, Table, Value, VmState};
+use mlua::{
+    Error as MluaError, Function, HookTriggers, Lua, LuaOptions, LuaSerdeExt, StdLib, Table, Value,
+    VmState,
+};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -165,7 +168,14 @@ impl LuaEngine {
         let errors: Vec<String> = module
             .config_validator
             .iter_errors(config)
-            .map(|e| e.to_string())
+            .map(|e| {
+                let path = e.instance_path().to_string();
+                if path.is_empty() {
+                    e.to_string()
+                } else {
+                    format!("{path}: {e}")
+                }
+            })
             .collect();
 
         if errors.is_empty() {
@@ -355,6 +365,13 @@ fn inspect_manifest(
     display_name: &str,
     limits: LuaLimits,
 ) -> Result<LuaModuleManifest, LuaEngineError> {
+    if source.as_bytes().starts_with(b"\x1b") {
+        return Err(LuaEngineError::InvalidModule {
+            script: display_name.to_owned(),
+            message: "precompiled Lua bytecode is not permitted".to_owned(),
+        });
+    }
+
     let lua = sandboxed_lua(limits).map_err(|source| LuaEngineError::Runtime {
         script: display_name.to_owned(),
         source,
@@ -389,6 +406,13 @@ fn execute_handler<T: serde::Serialize>(
     arguments: (&str, &T),
     module_id: &str,
 ) -> Result<Vec<LuaAction>, LuaEngineError> {
+    if module.source.as_bytes().starts_with(b"\x1b") {
+        return Err(LuaEngineError::InvalidModule {
+            script: module.display_name.to_string(),
+            message: "precompiled Lua bytecode is not permitted".to_owned(),
+        });
+    }
+
     let lua = sandboxed_lua(limits).map_err(|source| LuaEngineError::Runtime {
         script: module.display_name.to_string(),
         source,
@@ -450,7 +474,7 @@ fn execute_handler<T: serde::Serialize>(
 }
 
 fn sandboxed_lua(limits: LuaLimits) -> mlua::Result<Lua> {
-    let lua = Lua::new();
+    let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
     lua.set_memory_limit(limits.memory_bytes)?;
 
     let globals = lua.globals();
@@ -542,6 +566,12 @@ fn validate_manifest(
                 "command descriptions must contain 1 to 100 characters",
             );
         }
+        command
+            .validate_contexts()
+            .map_err(|message| LuaEngineError::InvalidModule {
+                script: display_name.to_owned(),
+                message,
+            })?;
         validate_options(&command.options, display_name)?;
     }
 

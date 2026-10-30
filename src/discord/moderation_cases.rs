@@ -159,33 +159,50 @@ pub async fn execute(
 
             let expires_at = duration_seconds.map(|secs| now + Duration::seconds(secs as i64));
 
-            // Execute underlying Discord action if applicable
+            // Execute underlying Discord action if applicable with proper error propagation
             if case_kind == CaseKind::Timeout {
                 if let Some(secs) = duration_seconds {
+                    if *secs == 0 || *secs > 2_419_200 {
+                        return Err(anyhow!(
+                            "czas wyciszenia musi wynosić od 1 do 2419200 sekund (28 dni)"
+                        ));
+                    }
                     let until = (now + Duration::seconds(*secs as i64)).to_rfc3339();
-                    let _ = guild_id
+                    guild_id
                         .edit_member(
                             &ctx.http,
                             target_user_id,
                             EditMember::new().disable_communication_until(until),
                         )
-                        .await;
+                        .await
+                        .map_err(|e| anyhow!("błąd Discord API podczas wyciszania: {e}"))?;
                 }
             } else if case_kind == CaseKind::Kick {
-                let _ = guild_id
+                guild_id
                     .kick_with_reason(&ctx.http, target_user_id, reason)
-                    .await;
+                    .await
+                    .map_err(|e| anyhow!("błąd Discord API podczas wyrzucania członka: {e}"))?;
             } else if case_kind == CaseKind::Ban {
-                let _ = guild_id
+                guild_id
                     .ban_with_reason(&ctx.http, target_user_id, 0, reason)
-                    .await;
+                    .await
+                    .map_err(|e| anyhow!("błąd Discord API podczas banowania: {e}"))?;
             } else if case_kind == CaseKind::Softban {
-                let _ = guild_id
+                guild_id
                     .ban_with_reason(&ctx.http, target_user_id, 1, reason)
-                    .await;
-                let _ = guild_id.unban(&ctx.http, target_user_id).await;
+                    .await
+                    .map_err(|e| anyhow!("błąd Discord API podczas banowania (softban): {e}"))?;
+                guild_id
+                    .unban(&ctx.http, target_user_id)
+                    .await
+                    .map_err(|e| {
+                        anyhow!("błąd Discord API podczas odbanowywania (softban): {e}")
+                    })?;
             } else if case_kind == CaseKind::Unban {
-                let _ = guild_id.unban(&ctx.http, target_user_id).await;
+                guild_id
+                    .unban(&ctx.http, target_user_id)
+                    .await
+                    .map_err(|e| anyhow!("błąd Discord API podczas odbanowywania: {e}"))?;
             }
 
             let created = state

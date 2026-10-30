@@ -164,7 +164,7 @@ return {
         if command == "rps" then
             local labels = { rock = "🪨 Kamień", paper = "📄 Papier", scissors = "✂️ Nożyce" }
             local choices = { "rock", "paper", "scissors" }
-            seed(ctx, ctx.options.choice)
+            seed(ctx, "rps")
             local bot = choices[math.random(#choices)]
             local user = ctx.options.choice
             local outcome

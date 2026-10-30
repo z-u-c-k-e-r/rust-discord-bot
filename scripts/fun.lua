@@ -87,7 +87,8 @@ return {
     },
 
     on_command = function(command, ctx)
-        math.randomseed(zuckerbot.unix_time() + tonumber(string.sub(ctx.user_id, -8)))
+        local user_suffix = tonumber(string.sub(ctx.user_id or "", -8)) or 1
+        math.randomseed(zuckerbot.unix_time() + user_suffix)
 
         if command == "meme" then
             return {
@@ -100,7 +101,8 @@ return {
         end
 
         if command == "roll" then
-            local maximum = tonumber(ctx.options.max) or 100
+            local raw_max = math.tointeger(ctx.options.max) or 100
+            local maximum = math.max(2, raw_max)
             return {
                 {
                     type = "reply",
@@ -139,10 +141,12 @@ return {
         end
 
         if command == "eightball" then
+            local question = ctx.options.question or ""
+            local answer = answers[math.random(#answers)]
             return {
                 {
                     type = "reply",
-                    content = answers[math.random(#answers)],
+                    content = string.format("> *%s*\n🎱 %s", zuckerbot.escape_mentions(question), answer),
                     ephemeral = false,
                 },
             }

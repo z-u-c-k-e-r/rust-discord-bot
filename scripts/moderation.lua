@@ -394,12 +394,6 @@ return {
             return {
                 accepted,
                 {
-                    type = "timeout_member",
-                    user_id = user_id,
-                    seconds = seconds,
-                    reason = reason,
-                },
-                {
                     type = "moderation_case",
                     operation = {
                         type = "create",
@@ -419,11 +413,6 @@ return {
             return {
                 accepted,
                 {
-                    type = "kick_member",
-                    user_id = user_id,
-                    reason = reason,
-                },
-                {
                     type = "moderation_case",
                     operation = {
                         type = "create",
@@ -441,12 +430,6 @@ return {
         if action == "ban" then
             return {
                 accepted,
-                {
-                    type = "ban_member",
-                    user_id = user_id,
-                    delete_message_days = 0,
-                    reason = reason,
-                },
                 {
                     type = "moderation_case",
                     operation = {

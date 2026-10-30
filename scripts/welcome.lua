@@ -37,9 +37,11 @@ return {
         end
 
         local template = ctx.config.message or "Witaj {user} na serwerze."
-        local user_id = ctx.data.user.id
-        local content = string.gsub(template, "{user}", "<@" .. user_id .. ">")
-        content = string.gsub(content, "{username}", zuckerbot.escape_mentions(ctx.data.user.global_name or ctx.data.user.name))
+        local user_id = tostring(ctx.data.user.id)
+        local safe_mention = "<@" .. user_id .. ">"
+        local safe_name = zuckerbot.escape_mentions(tostring(ctx.data.user.global_name or ctx.data.user.name or ""))
+        local content = string.gsub(template, "{user}", function() return safe_mention end)
+        content = string.gsub(content, "{username}", function() return safe_name end)
 
         return {
             {

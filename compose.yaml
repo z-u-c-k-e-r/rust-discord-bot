@@ -25,6 +25,10 @@ services:
         YT_DLP_VERSION: 2026.08.19
         YT_DLP_SHA256: 1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     env_file:
       - .env
     environment:
@@ -35,7 +39,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health/ready || exit 1"]
+      test: ["CMD-SHELL", "curl -f -s http://127.0.0.1:8080/health/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -35,6 +35,11 @@ impl Handler {
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
+        self.state
+            .metrics
+            .discord_events_total
+            .fetch_add(1, Ordering::Relaxed);
+
         tracing::info!(
             user = %ready.user.name,
             guilds = ready.guilds.len(),
@@ -50,11 +55,20 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        self.state
+            .metrics
+            .discord_events_total
+            .fetch_add(1, Ordering::Relaxed);
+
         let Interaction::Command(command) = interaction else {
             return;
         };
 
         if let Err(error) = handle_command(&ctx, &self.state, &command).await {
+            self.state
+                .metrics
+                .lua_command_errors_total
+                .fetch_add(1, Ordering::Relaxed);
             tracing::error!(
                 command = %command.data.name,
                 user_id = %command.user.id,
@@ -71,6 +85,11 @@ impl EventHandler for Handler {
     }
 
     async fn message(&self, ctx: Context, message: Message) {
+        self.state
+            .metrics
+            .discord_events_total
+            .fetch_add(1, Ordering::Relaxed);
+
         if message.author.bot {
             return;
         }
@@ -118,6 +137,11 @@ impl EventHandler for Handler {
     }
 
     async fn guild_member_addition(&self, ctx: Context, new_member: Member) {
+        self.state
+            .metrics
+            .discord_events_total
+            .fetch_add(1, Ordering::Relaxed);
+
         let guild_id = new_member.guild_id;
         let event = LuaEventContext {
             name: "guild_member_add".to_owned(),
@@ -246,6 +270,11 @@ async fn handle_command(
         options: options_to_json(&command.data.options),
         config,
     };
+
+    state
+        .metrics
+        .lua_commands_total
+        .fetch_add(1, Ordering::Relaxed);
 
     let actions = state
         .scripts

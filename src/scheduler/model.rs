@@ -43,11 +43,12 @@ impl ScheduledJob {
     }
 
     pub fn is_claimable(&self, now: DateTime<Utc>, stale_before: DateTime<Utc>) -> bool {
-        (self.status == STATUS_ACTIVE && self.run_at <= now)
-            || (self.status == STATUS_PROCESSING
-                && self
-                    .locked_at
-                    .is_some_and(|locked_at| locked_at < stale_before))
+        self.attempts < self.max_attempts
+            && ((self.status == STATUS_ACTIVE && self.run_at <= now)
+                || (self.status == STATUS_PROCESSING
+                    && self
+                        .locked_at
+                        .is_some_and(|locked_at| locked_at < stale_before)))
     }
 
     pub fn claim(&mut self, worker_id: &str, now: DateTime<Utc>) {

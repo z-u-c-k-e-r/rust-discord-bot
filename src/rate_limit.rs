@@ -150,24 +150,40 @@ impl RateLimiter {
             let guild_quota = self.quota_for("command_guild");
             let guild_key = format!("guild:{gid}:cmd");
 
-            let mut user_entry = self.history.entry(user_key).or_default();
-            let user_timestamps = user_entry.value_mut();
-            if let Err(decision) = Self::evaluate_capacity(user_timestamps, now, cmd_quota) {
+            // Scope user capacity evaluation separately to prevent DashMap shard deadlock
+            let user_decision = {
+                let mut user_entry = self.history.entry(user_key.clone()).or_default();
+                Self::evaluate_capacity(user_entry.value_mut(), now, cmd_quota)
+            };
+            if let Err(decision) = user_decision {
                 return decision;
             }
 
-            let mut guild_entry = self.history.entry(guild_key).or_default();
-            let guild_timestamps = guild_entry.value_mut();
-            if let Err(decision) = Self::evaluate_capacity(guild_timestamps, now, guild_quota) {
+            // Scope guild capacity evaluation separately
+            let guild_decision = {
+                let mut guild_entry = self.history.entry(guild_key.clone()).or_default();
+                Self::evaluate_capacity(guild_entry.value_mut(), now, guild_quota)
+            };
+            if let Err(decision) = guild_decision {
                 return decision;
             }
 
-            user_timestamps.push(now);
-            guild_timestamps.push(now);
+            // Record user timestamp
+            let remaining = {
+                let mut user_entry = self.history.entry(user_key).or_default();
+                let user_timestamps = user_entry.value_mut();
+                user_timestamps.push(now);
+                cmd_quota
+                    .max_requests
+                    .saturating_sub(user_timestamps.len() as u32)
+            };
 
-            let remaining = cmd_quota
-                .max_requests
-                .saturating_sub(user_timestamps.len() as u32);
+            // Record guild timestamp
+            {
+                let mut guild_entry = self.history.entry(guild_key).or_default();
+                guild_entry.value_mut().push(now);
+            }
+
             RateLimitDecision {
                 allowed: true,
                 remaining,

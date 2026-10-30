@@ -373,38 +373,72 @@ pub async fn revalidate_guild_permission(
             .any(|g| g.id == guild_id && can_manage(g)));
     }
 
-    let Some(ref access_token) = session.access_token else {
-        return Ok(session
-            .guilds
-            .iter()
-            .any(|g| g.id == guild_id && can_manage(g)));
-    };
+    if let Some(ref access_token) = session.access_token {
+        let response = state
+            .app
+            .http_client
+            .get(DISCORD_GUILDS_URL)
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(ApiError::upstream)?;
 
+        if response.status() == StatusCode::UNAUTHORIZED {
+            return Err(ApiError::unauthorized(
+                "Token autoryzacyjny Discord wygasł lub został odwołany. Zaloguj się ponownie.",
+            ));
+        }
+
+        let guilds = response
+            .error_for_status()
+            .map_err(ApiError::upstream)?
+            .json::<Vec<DashboardGuild>>()
+            .await
+            .map_err(ApiError::upstream)?;
+
+        let can_manage_guild = guilds.iter().any(|g| g.id == guild_id && can_manage(g));
+        return Ok(can_manage_guild);
+    }
+
+    // Access token was discarded at rest for security; revalidate using Bot token via Discord API
+    let member_url = format!(
+        "https://discord.com/api/v10/guilds/{guild_id}/members/{}",
+        session.user.id
+    );
     let response = state
         .app
         .http_client
-        .get(DISCORD_GUILDS_URL)
-        .bearer_auth(access_token)
+        .get(&member_url)
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bot {}", state.app.config.discord_token),
+        )
         .send()
         .await
         .map_err(ApiError::upstream)?;
 
-    if response.status() == StatusCode::UNAUTHORIZED {
-        return Err(ApiError::unauthorized(
-            "Token autoryzacyjny Discord wygasł lub został odwołany. Zaloguj się ponownie.",
-        ));
+    if response.status() == StatusCode::NOT_FOUND || response.status() == StatusCode::FORBIDDEN {
+        return Ok(false);
     }
 
-    let guilds = response
-        .error_for_status()
-        .map_err(ApiError::upstream)?
-        .json::<Vec<DashboardGuild>>()
-        .await
-        .map_err(ApiError::upstream)?;
+    if !response.status().is_success() {
+        return Ok(session
+            .guilds
+            .iter()
+            .any(|g| g.id == guild_id && can_manage(g)));
+    }
 
-    let can_manage_guild = guilds.iter().any(|g| g.id == guild_id && can_manage(g));
+    let member_json: serde_json::Value = response.json().await.map_err(ApiError::upstream)?;
+    if let Some(perms_str) = member_json.get("permissions").and_then(|p| p.as_str())
+        && let Ok(perms) = perms_str.parse::<u64>()
+    {
+        return Ok((perms & (ADMINISTRATOR | MANAGE_GUILD)) != 0);
+    }
 
-    Ok(can_manage_guild)
+    Ok(session
+        .guilds
+        .iter()
+        .any(|g| g.id == guild_id && (g.owner || can_manage(g))))
 }
 
 pub async fn cleanup_stale_records(state: &WebState) -> (usize, usize, usize) {

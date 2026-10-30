@@ -348,8 +348,9 @@ impl PostgresSchedulerStore {
             WITH due AS (
                 SELECT id
                 FROM scheduled_jobs
-                WHERE (status = 'active' AND run_at <= $2)
-                   OR (status = 'processing' AND locked_at < $3)
+                WHERE ((status = 'active' AND run_at <= $2)
+                   OR (status = 'processing' AND locked_at < $3))
+                  AND attempts < max_attempts
                 ORDER BY run_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT $4

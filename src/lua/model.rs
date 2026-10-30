@@ -261,7 +261,14 @@ pub enum LuaAction {
 impl LuaAction {
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::Reply { content, .. } | Self::SendMessage { content, .. } => {
+            Self::Reply { content, .. } => validate_content(content),
+            Self::SendMessage {
+                channel_id,
+                content,
+            } => {
+                if let Some(channel_id) = channel_id {
+                    validate_snowflake(channel_id)?;
+                }
                 validate_content(content)
             }
             Self::DeleteMessage {

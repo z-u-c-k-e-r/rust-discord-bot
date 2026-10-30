@@ -198,6 +198,13 @@ async fn process_due_jobs(
         )
         .await?;
 
+    if !jobs.is_empty() {
+        state
+            .metrics
+            .scheduler_jobs_claimed_total
+            .fetch_add(jobs.len() as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+
     for job in jobs {
         let permit = match semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
@@ -256,7 +263,11 @@ async fn process_single_job(
         }
     });
 
-    let delivery_result = deliver_job(&http, &job).await;
+    let delivery_result =
+        tokio::time::timeout(StdDuration::from_secs(30), deliver_job(&http, &job))
+            .await
+            .map_err(|_| anyhow!("delivery timed out after 30 seconds"))
+            .and_then(|res| res);
     let _ = stop_tx.send(());
     let _ = heartbeat_handle.await;
 
@@ -274,6 +285,11 @@ async fn process_single_job(
                 tracing::warn!(job_id = %job.id, "scheduler job lost its lease before completion");
                 return;
             };
+
+            state
+                .metrics
+                .scheduler_jobs_delivered_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
             record_delivery_audit(
                 &state,
@@ -298,6 +314,11 @@ async fn process_single_job(
                 tracing::warn!(job_id = %job.id, "failed scheduler job lost its lease");
                 return;
             };
+
+            state
+                .metrics
+                .scheduler_jobs_failed_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
             let event = if updated.status == STATUS_FAILED {
                 "scheduled_job_failed"

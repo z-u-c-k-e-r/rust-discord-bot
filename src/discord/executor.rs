@@ -189,7 +189,9 @@ fn action_rate_limit_scope(action: &LuaAction) -> Option<&'static str> {
         } => Some("music_play"),
         LuaAction::BanMember { .. }
         | LuaAction::KickMember { .. }
+        | LuaAction::TimeoutMember { .. }
         | LuaAction::DeleteMessage { .. }
+        | LuaAction::Purge { .. }
         | LuaAction::ModerationCase { .. } => Some("destructive_admin"),
         _ => None,
     }
@@ -202,7 +204,9 @@ async fn execute_action(
     origin: &ActionOrigin,
     action: &LuaAction,
 ) -> Result<Option<String>> {
-    if let Some(scope) = action_rate_limit_scope(action)
+    // Action-level rate limits apply to interactive commands, exempting automated system/event actions
+    if origin.enforce_actor_permissions
+        && let Some(scope) = action_rate_limit_scope(action)
         && let Some(actor_id) = origin.actor_id
     {
         let guild_id_str = origin.guild_id.map(|g| g.get().to_string());
@@ -345,7 +349,12 @@ async fn execute_action(
             let guild_id = require_guild(origin)?;
             let user_id = UserId::new(parse_snowflake(user_id)?);
             let role_id = RoleId::new(parse_snowflake(role_id)?);
-            ensure_role_hierarchy(ctx, guild_id, origin.actor_id, role_id).await?;
+            if origin.enforce_actor_permissions {
+                ensure_member_hierarchy(ctx, guild_id, origin.actor_id, user_id).await?;
+                ensure_role_hierarchy(ctx, guild_id, origin.actor_id, role_id).await?;
+            } else {
+                ensure_role_hierarchy(ctx, guild_id, None, role_id).await?;
+            }
             let member = guild_id.member(&ctx.http, user_id).await?;
             member.add_role(&ctx.http, role_id).await?;
             audit_action(
@@ -370,7 +379,12 @@ async fn execute_action(
             let guild_id = require_guild(origin)?;
             let user_id = UserId::new(parse_snowflake(user_id)?);
             let role_id = RoleId::new(parse_snowflake(role_id)?);
-            ensure_role_hierarchy(ctx, guild_id, origin.actor_id, role_id).await?;
+            if origin.enforce_actor_permissions {
+                ensure_member_hierarchy(ctx, guild_id, origin.actor_id, user_id).await?;
+                ensure_role_hierarchy(ctx, guild_id, origin.actor_id, role_id).await?;
+            } else {
+                ensure_role_hierarchy(ctx, guild_id, None, role_id).await?;
+            }
             let member = guild_id.member(&ctx.http, user_id).await?;
             member.remove_role(&ctx.http, role_id).await?;
             audit_action(
@@ -621,6 +635,11 @@ async fn ensure_role_hierarchy(
         .roles
         .get(&role_id)
         .ok_or_else(|| anyhow!("rola nie istnieje na tym serwerze"))?;
+    if role.managed {
+        return Err(anyhow!(
+            "nie można modyfikować ról zarządzanych przez Discorda/integracje"
+        ));
+    }
     let target_rank = role_rank(role);
 
     let bot_id = ctx.cache.current_user().id;

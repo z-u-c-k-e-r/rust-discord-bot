@@ -308,9 +308,9 @@ return {
             additionalProperties = false,
             properties = {
                 open_category_id = {
-                    type = "string",
+                    type = { "string", "null" },
                     pattern = "^[0-9]+$",
-                    default = "",
+                    default = nil,
                     description = "ID kategorii dla otwartych ticketów.",
                 },
                 archive_category_id = {

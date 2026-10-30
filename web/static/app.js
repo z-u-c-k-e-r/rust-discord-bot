@@ -47,7 +47,11 @@ async function request(path, options = {}) {
 
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body.error || `Błąd HTTP ${response.status}`);
+    let msg = body.error || `Błąd HTTP ${response.status}`;
+    if (Array.isArray(body.details) && body.details.length > 0) {
+      msg += `: ${body.details.join("; ")}`;
+    }
+    throw new Error(msg);
   }
   return body;
 }

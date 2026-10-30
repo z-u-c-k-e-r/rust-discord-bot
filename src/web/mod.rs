@@ -3,10 +3,14 @@ mod routes;
 mod static_files;
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use anyhow::Result;
 use axum::{
     Router,
+    extract::{Request, State},
+    middleware::{self, Next},
+    response::Response,
     routing::{get, patch, post, put},
 };
 use dashmap::DashMap;
@@ -94,6 +98,10 @@ pub async fn serve_with_shutdown(
             "/api/guilds/{guild_id}/audit",
             get(routes::guild_audit_events),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            track_dashboard_requests,
+        ))
         .with_state(state);
 
     let listener = TcpListener::bind(bind).await?;
@@ -106,4 +114,17 @@ pub async fn serve_with_shutdown(
         .await?;
 
     Ok(())
+}
+
+async fn track_dashboard_requests(
+    State(state): State<WebState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    state
+        .app
+        .metrics
+        .dashboard_requests_total
+        .fetch_add(1, Ordering::Relaxed);
+    next.run(request).await
 }
