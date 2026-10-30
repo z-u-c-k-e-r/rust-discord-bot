@@ -84,16 +84,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          psql --host 127.0.0.1 --port 5432 --username zuckerbot --dbname template1 --set ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS zuckerbot_migration_check;"
+          psql --host 127.0.0.1 --port 5432 --username zuckerbot --dbname template1 --set ON_ERROR_STOP=1 -c "CREATE DATABASE zuckerbot_migration_check;"
           for migration in migrations/*.sql; do
             echo "Applying ${migration}"
             psql \
               --host 127.0.0.1 \
               --port 5432 \
               --username zuckerbot \
-              --dbname zuckerbot \
+              --dbname zuckerbot_migration_check \
               --set ON_ERROR_STOP=1 \
               --file "${migration}"
           done
+          psql --host 127.0.0.1 --port 5432 --username zuckerbot --dbname template1 --set ON_ERROR_STOP=1 -c "DROP DATABASE zuckerbot_migration_check;"
 
       - name: Run tests (including PostgreSQL integration tests)
         env:
