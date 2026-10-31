@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
@@ -30,6 +30,7 @@ pub struct RateLimitDecision {
 pub struct RateLimiter {
     policies: Arc<DashMap<String, RateLimitQuota>>,
     history: Arc<DashMap<String, Vec<Instant>>>,
+    reservation_lock: Arc<Mutex<()>>,
 }
 
 impl Default for RateLimiter {
@@ -61,6 +62,7 @@ impl Default for RateLimiter {
         Self {
             policies,
             history: Arc::new(DashMap::new()),
+            reservation_lock: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -81,6 +83,22 @@ impl RateLimiter {
             .get(scope)
             .map(|q| *q.value())
             .unwrap_or(RateLimitQuota::new(30, 60))
+    }
+
+    #[must_use]
+    pub fn max_window(&self) -> Duration {
+        let max_sec = self
+            .policies
+            .iter()
+            .map(|entry| entry.value().window_seconds)
+            .max()
+            .unwrap_or(3600);
+        Duration::from_secs(max_sec)
+    }
+
+    #[must_use]
+    pub fn keys_count(&self) -> usize {
+        self.history.len()
     }
 
     fn evaluate_capacity(
@@ -112,6 +130,10 @@ impl RateLimiter {
 
     pub fn check_rate_limit(&self, key: &str, quota: RateLimitQuota) -> RateLimitDecision {
         let now = Instant::now();
+        let _guard = self
+            .reservation_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut entry = self.history.entry(key.to_string()).or_default();
         let timestamps = entry.value_mut();
 
@@ -150,39 +172,35 @@ impl RateLimiter {
             let guild_quota = self.quota_for("command_guild");
             let guild_key = format!("guild:{gid}:cmd");
 
-            // Scope user capacity evaluation separately to prevent DashMap shard deadlock
-            let user_decision = {
-                let mut user_entry = self.history.entry(user_key.clone()).or_default();
-                Self::evaluate_capacity(user_entry.value_mut(), now, cmd_quota)
-            };
-            if let Err(decision) = user_decision {
+            let _guard = self
+                .reservation_lock
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+
+            // Evaluate user capacity first under atomic lock
+            let mut user_entry = self.history.entry(user_key).or_default();
+            if let Err(decision) = Self::evaluate_capacity(user_entry.value_mut(), now, cmd_quota) {
                 return decision;
             }
 
-            // Scope guild capacity evaluation separately
-            let guild_decision = {
-                let mut guild_entry = self.history.entry(guild_key.clone()).or_default();
+            // Evaluate guild capacity under same atomic lock
+            let mut guild_entry = self.history.entry(guild_key).or_default();
+            if let Err(decision) =
                 Self::evaluate_capacity(guild_entry.value_mut(), now, guild_quota)
-            };
-            if let Err(decision) = guild_decision {
+            {
+                // Neither user nor guild quota is consumed when guild limit is exceeded
                 return decision;
             }
 
-            // Record user timestamp
-            let remaining = {
-                let mut user_entry = self.history.entry(user_key).or_default();
-                let user_timestamps = user_entry.value_mut();
-                user_timestamps.push(now);
-                cmd_quota
-                    .max_requests
-                    .saturating_sub(user_timestamps.len() as u32)
-            };
+            // Both user and guild budgets verified: commit timestamps atomically
+            let user_timestamps = user_entry.value_mut();
+            user_timestamps.push(now);
+            let remaining = cmd_quota
+                .max_requests
+                .saturating_sub(user_timestamps.len() as u32);
 
-            // Record guild timestamp
-            {
-                let mut guild_entry = self.history.entry(guild_key).or_default();
-                guild_entry.value_mut().push(now);
-            }
+            let guild_timestamps = guild_entry.value_mut();
+            guild_timestamps.push(now);
 
             RateLimitDecision {
                 allowed: true,
@@ -211,9 +229,17 @@ impl RateLimiter {
     }
 
     pub fn cleanup_stale_entries(&self) {
-        let now = Instant::now();
+        self.cleanup_stale_entries_at(Instant::now());
+    }
+
+    pub fn cleanup_stale_entries_at(&self, now: Instant) {
+        let max_window = self.max_window();
+        let _guard = self
+            .reservation_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         self.history.retain(|_, timestamps| {
-            timestamps.retain(|&ts| now.saturating_duration_since(ts) < Duration::from_secs(3600));
+            timestamps.retain(|&ts| now.saturating_duration_since(ts) < max_window);
             !timestamps.is_empty()
         });
     }

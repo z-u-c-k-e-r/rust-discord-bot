@@ -47,6 +47,7 @@ pub async fn serve_with_shutdown(
         loop {
             interval.tick().await;
             let (states, sessions, perms) = auth::cleanup_stale_records(&cleanup_state).await;
+            cleanup_state.app.rate_limiter.cleanup_stale_entries();
             if states > 0 || sessions > 0 || perms > 0 {
                 tracing::debug!(
                     states,
@@ -113,12 +114,15 @@ pub async fn serve_with_shutdown(
 
     let listener = TcpListener::bind(bind).await?;
     tracing::info!(%bind, "dashboard is listening");
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            let _ = shutdown_rx.recv().await;
-            tracing::info!("dashboard received shutdown signal");
-        })
-        .await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = shutdown_rx.recv().await;
+        tracing::info!("dashboard received shutdown signal");
+    })
+    .await?;
 
     Ok(())
 }

@@ -20,6 +20,7 @@ pub struct Config {
     pub lua_instruction_limit: i64,
     pub lua_hook_granularity: u32,
     pub music_allowed_hosts: HashSet<String>,
+    pub trusted_proxies: HashSet<std::net::IpAddr>,
 }
 
 impl Config {
@@ -76,6 +77,13 @@ impl Config {
             lua_instruction_limit: env_parse("LUA_INSTRUCTION_LIMIT", 500_000_i64)?,
             lua_hook_granularity: env_parse("LUA_HOOK_GRANULARITY", 1_000_u32)?,
             music_allowed_hosts,
+            trusted_proxies: env::var("TRUSTED_PROXIES")
+                .unwrap_or_else(|_| "127.0.0.1,::1".to_owned())
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .filter_map(|value| value.parse::<std::net::IpAddr>().ok())
+                .collect(),
         };
 
         config.validate()?;

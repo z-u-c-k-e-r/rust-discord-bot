@@ -418,6 +418,9 @@ async fn create_test_state() -> AppState {
         lua_instruction_limit: 200_000,
         lua_hook_granularity: 100,
         music_allowed_hosts: std::collections::HashSet::new(),
+        trusted_proxies: ["127.0.0.1".parse().unwrap(), "::1".parse().unwrap()]
+            .into_iter()
+            .collect(),
     };
     AppState::bootstrap(config)
         .await

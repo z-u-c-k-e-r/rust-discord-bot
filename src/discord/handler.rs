@@ -39,6 +39,7 @@ impl Handler {
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
+        self.state.is_gateway_ready.store(true, Ordering::SeqCst);
         self.state
             .metrics
             .discord_events_total

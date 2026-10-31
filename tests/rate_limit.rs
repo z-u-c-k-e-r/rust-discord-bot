@@ -95,7 +95,61 @@ fn test_per_user_and_per_guild_command_limits() {
 #[test]
 fn test_stale_history_cleanup() {
     let limiter = RateLimiter::new();
-    limiter.check_rate_limit("temp_key", RateLimitQuota::new(5, 60));
-    limiter.cleanup_stale_entries();
-    // Doesn't panic and maintains state
+    limiter.check_rate_limit("temp_key_short", RateLimitQuota::new(5, 60));
+    limiter.check_rate_limit("temp_key_long", RateLimitQuota::new(5, 7200));
+
+    assert_eq!(limiter.keys_count(), 2);
+
+    // Virtual clock advanced past the max window (2 hours)
+    let future = std::time::Instant::now() + Duration::from_secs(8000);
+    limiter.cleanup_stale_entries_at(future);
+
+    // All expired keys and empty entries are purged from history
+    assert_eq!(limiter.keys_count(), 0);
+}
+
+#[test]
+fn test_concurrent_simultaneous_requests_with_limit_one() {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let limiter = Arc::new(RateLimiter::new());
+    limiter.set_quota("command_user", RateLimitQuota::new(1, 60));
+    limiter.set_quota("command_guild", RateLimitQuota::new(1, 60));
+
+    let threads = 20;
+    let barrier = Arc::new(Barrier::new(threads));
+    let mut handles = Vec::new();
+
+    for _ in 0..threads {
+        let lim = Arc::clone(&limiter);
+        let bar = Arc::clone(&barrier);
+        handles.push(thread::spawn(move || {
+            bar.wait();
+            lim.check_command("test_cmd", "concurrent_user", Some("concurrent_guild"))
+        }));
+    }
+
+    let mut allowed_count = 0;
+    let mut denied_count = 0;
+
+    for handle in handles {
+        let decision = handle.join().expect("thread join must succeed");
+        if decision.allowed {
+            allowed_count += 1;
+        } else {
+            denied_count += 1;
+        }
+    }
+
+    // Exactly 1 allowed, 19 rejected when limit is 1!
+    assert_eq!(
+        allowed_count, 1,
+        "exactly 1 concurrent request should succeed under limit 1"
+    );
+    assert_eq!(
+        denied_count,
+        threads - 1,
+        "all other concurrent requests should be rejected"
+    );
 }

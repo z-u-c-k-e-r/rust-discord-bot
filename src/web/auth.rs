@@ -36,52 +36,71 @@ pub struct CachedGuildPermission {
     pub checked_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LoginRateLimiter {
     per_ip: DashMap<String, (DateTime<Utc>, u32)>,
     global: AtomicU32,
     global_window_start: AtomicI64,
+    global_lock: std::sync::Mutex<()>,
+}
+
+impl Default for LoginRateLimiter {
+    fn default() -> Self {
+        Self {
+            per_ip: DashMap::new(),
+            global: AtomicU32::new(0),
+            global_window_start: AtomicI64::new(Utc::now().timestamp()),
+            global_lock: std::sync::Mutex::new(()),
+        }
+    }
 }
 
 impl LoginRateLimiter {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            per_ip: DashMap::new(),
-            global: AtomicU32::new(0),
-            global_window_start: AtomicI64::new(Utc::now().timestamp()),
-        }
+        Self::default()
     }
 
     pub fn check_and_record(&self, ip: &str) -> Result<(), ApiError> {
         let now = Utc::now();
         let now_ts = now.timestamp();
 
-        let window_start = self.global_window_start.load(Ordering::Relaxed);
+        // 1. Evaluate per-IP limit first without consuming global accepted-login slots
+        {
+            let mut entry = self.per_ip.entry(ip.to_owned()).or_insert_with(|| (now, 0));
+            let (ip_window_start, count) = entry.value_mut();
+            if now - *ip_window_start >= Duration::seconds(60) {
+                *ip_window_start = now;
+                *count = 1;
+            } else {
+                if *count >= MAX_LOGIN_REQUESTS_PER_MINUTE_PER_IP {
+                    return Err(ApiError::too_many_requests(
+                        "Zbyt wiele prób logowania z Twojego adresu IP. Odczekaj chwilę.",
+                    ));
+                }
+                *count = count.saturating_add(1);
+            }
+        }
+
+        // 2. Per-IP check passed: atomically reserve global budget
+        let _guard = self.global_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let window_start = self.global_window_start.load(Ordering::SeqCst);
         if now_ts.saturating_sub(window_start) >= 60 {
-            self.global_window_start.store(now_ts, Ordering::Relaxed);
-            self.global.store(1, Ordering::Relaxed);
+            self.global_window_start.store(now_ts, Ordering::SeqCst);
+            self.global.store(1, Ordering::SeqCst);
         } else {
-            let count = self.global.fetch_add(1, Ordering::Relaxed);
-            if count >= MAX_GLOBAL_LOGIN_REQUESTS_PER_MINUTE {
+            let current = self.global.load(Ordering::SeqCst);
+            if current >= MAX_GLOBAL_LOGIN_REQUESTS_PER_MINUTE {
+                // Roll back per-IP increment so failed global attempt does not consume user's slot
+                if let Some(mut entry) = self.per_ip.get_mut(ip) {
+                    let (_, count) = entry.value_mut();
+                    *count = count.saturating_sub(1);
+                }
                 return Err(ApiError::too_many_requests(
                     "Zbyt wiele prób logowania na serwerze. Spróbuj ponownie za chwilę.",
                 ));
             }
-        }
-
-        let mut entry = self.per_ip.entry(ip.to_owned()).or_insert_with(|| (now, 0));
-        let (ip_window_start, count) = entry.value_mut();
-        if now - *ip_window_start >= Duration::seconds(60) {
-            *ip_window_start = now;
-            *count = 1;
-        } else {
-            *count = count.saturating_add(1);
-            if *count > MAX_LOGIN_REQUESTS_PER_MINUTE_PER_IP {
-                return Err(ApiError::too_many_requests(
-                    "Zbyt wiele prób logowania z Twojego adresu IP. Odczekaj chwilę.",
-                ));
-            }
+            self.global.store(current + 1, Ordering::SeqCst);
         }
 
         Ok(())
@@ -108,9 +127,14 @@ struct OAuthToken {
 
 pub async fn login(
     State(state): State<WebState>,
+    axum::extract::ConnectInfo(peer_addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Redirect, ApiError> {
-    let client_ip = extract_client_ip(&headers);
+    let client_ip = resolve_client_ip(
+        Some(peer_addr.ip()),
+        &headers,
+        &state.app.config.trusted_proxies,
+    );
     state.login_rate_limiter.check_and_record(&client_ip)?;
 
     let pending = state
@@ -422,10 +446,14 @@ pub async fn revalidate_guild_permission(
     }
 
     if !response.status().is_success() {
-        return Ok(session
-            .guilds
-            .iter()
-            .any(|g| g.id == guild_id && can_manage(g)));
+        // FAIL-CLOSED: Discord API error (e.g. 5xx/429); do not fall back to stale session snapshot
+        tracing::warn!(
+            status = %response.status(),
+            guild_id,
+            user_id = %session.user.id,
+            "Discord API returned non-success when revalidating permissions; failing closed"
+        );
+        return Ok(false);
     }
 
     let member_json: serde_json::Value = response.json().await.map_err(ApiError::upstream)?;
@@ -435,10 +463,13 @@ pub async fn revalidate_guild_permission(
         return Ok((perms & (ADMINISTRATOR | MANAGE_GUILD)) != 0);
     }
 
-    Ok(session
-        .guilds
-        .iter()
-        .any(|g| g.id == guild_id && (g.owner || can_manage(g))))
+    // FAIL-CLOSED: Ambiguous member response (missing permissions field); deny write access
+    tracing::warn!(
+        guild_id,
+        user_id = %session.user.id,
+        "Discord API member response lacked permissions field; failing closed"
+    );
+    Ok(false)
 }
 
 pub async fn cleanup_stale_records(state: &WebState) -> (usize, usize, usize) {
@@ -499,22 +530,51 @@ pub fn cleanup_stale_data(
     (states_removed, sessions_removed, perms_removed)
 }
 
-fn extract_client_ip(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            headers
+pub fn resolve_client_ip(
+    peer_ip: Option<std::net::IpAddr>,
+    headers: &HeaderMap,
+    trusted_proxies: &std::collections::HashSet<std::net::IpAddr>,
+) -> String {
+    if let Some(peer) = peer_ip {
+        if trusted_proxies.contains(&peer) {
+            if let Some(forwarded) = headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+            {
+                return forwarded.to_string();
+            }
+            if let Some(real_ip) = headers
                 .get("x-real-ip")
                 .and_then(|v| v.to_str().ok())
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-        })
-        .unwrap_or("127.0.0.1")
-        .to_owned()
+                .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+            {
+                return real_ip.to_string();
+            }
+        }
+        peer.to_string()
+    } else {
+        headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                headers
+                    .get("x-real-ip")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or("127.0.0.1")
+            .to_owned()
+    }
 }
 
 fn can_manage(guild: &DashboardGuild) -> bool {
@@ -574,6 +634,9 @@ mod tests {
             lua_instruction_limit: 200_000,
             lua_hook_granularity: 100,
             music_allowed_hosts: std::collections::HashSet::new(),
+            trusted_proxies: ["127.0.0.1".parse().unwrap(), "::1".parse().unwrap()]
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -724,5 +787,80 @@ mod tests {
             .get(&("user_42".to_owned(), "guild_1".to_owned()))
             .unwrap();
         assert!(!cached_revoked.can_manage);
+    }
+
+    #[test]
+    fn test_login_rate_limiter_cross_ip_isolation_and_atomic_budget() {
+        let limiter = LoginRateLimiter::new();
+        let ip_a = "198.51.100.1";
+        let ip_b = "198.51.100.2";
+
+        // Client A spams 60 requests
+        for _ in 0..MAX_LOGIN_REQUESTS_PER_MINUTE_PER_IP {
+            assert!(
+                limiter.check_and_record(ip_a).is_ok(),
+                "first 10 requests from client A must pass"
+            );
+        }
+
+        // Next 50 requests from Client A are rejected by per-IP limit
+        for _ in 0..50 {
+            let blocked = limiter.check_and_record(ip_a);
+            assert!(blocked.is_err(), "excess requests from A must be blocked");
+            assert_eq!(blocked.unwrap_err().status, StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        // Client B arrives with their first request:
+        // Must SUCCEED because Client A's rejected attempts did not consume global budget!
+        let client_b_attempt = limiter.check_and_record(ip_b);
+        assert!(
+            client_b_attempt.is_ok(),
+            "independent client B must not be starved by client A's rejections"
+        );
+    }
+
+    #[test]
+    fn test_resolve_client_ip_direct_trusted_proxy_and_spoofed_header() {
+        use std::collections::HashSet;
+        use std::net::IpAddr;
+
+        let trusted_proxies: HashSet<IpAddr> = [
+            "127.0.0.1".parse().unwrap(),
+            "10.0.0.1".parse().unwrap(),
+            "::1".parse().unwrap(),
+        ]
+        .into_iter()
+        .collect();
+
+        // 1. Untrusted direct peer connecting directly with spoofed X-Forwarded-For
+        let mut headers_spoofed = HeaderMap::new();
+        headers_spoofed.insert("x-forwarded-for", "8.8.8.8".parse().unwrap());
+        headers_spoofed.insert("x-real-ip", "8.8.8.8".parse().unwrap());
+
+        let direct_peer: IpAddr = "198.51.100.50".parse().unwrap();
+        let resolved = resolve_client_ip(Some(direct_peer), &headers_spoofed, &trusted_proxies);
+        assert_eq!(
+            resolved, "198.51.100.50",
+            "untrusted peer socket address must be used, spoofed proxy headers ignored"
+        );
+
+        // 2. Direct connection without headers
+        let headers_empty = HeaderMap::new();
+        let direct_clean = resolve_client_ip(Some(direct_peer), &headers_empty, &trusted_proxies);
+        assert_eq!(direct_clean, "198.51.100.50");
+
+        // 3. Trusted reverse proxy forwarding real client IP
+        let trusted_peer: IpAddr = "127.0.0.1".parse().unwrap();
+        let mut headers_valid_proxy = HeaderMap::new();
+        headers_valid_proxy.insert(
+            "x-forwarded-for",
+            "203.0.113.195, 10.0.0.1".parse().unwrap(),
+        );
+
+        let proxied = resolve_client_ip(Some(trusted_peer), &headers_valid_proxy, &trusted_proxies);
+        assert_eq!(
+            proxied, "203.0.113.195",
+            "trusted proxy forwarded header must be extracted"
+        );
     }
 }

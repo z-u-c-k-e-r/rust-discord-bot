@@ -187,6 +187,33 @@ pub async fn health_ready(
         checks.insert("lua_engine".to_owned(), json!("error: no modules loaded"));
     }
 
+    if state.app.is_shutting_down.load(Ordering::SeqCst) {
+        is_ready = false;
+        checks.insert(
+            "lifecycle".to_owned(),
+            json!("unready (process is shutting down)"),
+        );
+    } else {
+        checks.insert("lifecycle".to_owned(), json!("ok (running)"));
+    }
+
+    let is_offline_mode = state.app.config.discord_token.starts_with("dummy")
+        || state.app.config.discord_token.starts_with("mock");
+    if is_offline_mode {
+        checks.insert(
+            "discord_gateway".to_owned(),
+            json!("ok (offline/dummy mode)"),
+        );
+    } else if state.app.is_gateway_ready.load(Ordering::SeqCst) {
+        checks.insert("discord_gateway".to_owned(), json!("ok (gateway ready)"));
+    } else {
+        is_ready = false;
+        checks.insert(
+            "discord_gateway".to_owned(),
+            json!("unready (waiting for gateway ready event)"),
+        );
+    }
+
     let payload = json!({
         "status": if is_ready { "ready" } else { "unready" },
         "version": env!("CARGO_PKG_VERSION"),

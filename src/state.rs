@@ -33,6 +33,8 @@ pub struct AppState {
     pub sessions: SessionStore,
     pub rate_limiter: Arc<crate::rate_limit::RateLimiter>,
     pub guild_events: tokio::sync::broadcast::Sender<GuildRealtimeEvent>,
+    pub is_gateway_ready: Arc<std::sync::atomic::AtomicBool>,
+    pub is_shutting_down: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -103,6 +105,8 @@ impl AppState {
         let metrics = Arc::new(crate::metrics::Metrics::new());
         let rate_limiter = Arc::new(crate::rate_limit::RateLimiter::new());
         let (guild_events, _) = tokio::sync::broadcast::channel(512);
+        let is_gateway_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let is_shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
         Ok(Self {
             config,
             scripts,
@@ -116,6 +120,8 @@ impl AppState {
             sessions,
             rate_limiter,
             guild_events,
+            is_gateway_ready,
+            is_shutting_down,
         })
     }
 }
