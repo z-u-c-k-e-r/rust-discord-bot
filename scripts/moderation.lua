@@ -428,6 +428,7 @@ return {
         end
 
         if action == "ban" then
+            local delete_days = ctx.options.delete_days ~= nil and tonumber(ctx.options.delete_days) or nil
             return {
                 accepted,
                 {
@@ -440,12 +441,14 @@ return {
                         severity = severity,
                         points = points > 0 and points or 10,
                         visible_to_subject = true,
+                        delete_days = delete_days,
                     },
                 },
             }
         end
 
         if action == "softban" then
+            local delete_days = ctx.options.delete_days ~= nil and tonumber(ctx.options.delete_days) or nil
             return {
                 accepted,
                 {
@@ -458,6 +461,7 @@ return {
                         severity = severity,
                         points = points > 0 and points or 3,
                         visible_to_subject = true,
+                        delete_days = delete_days,
                     },
                 },
             }

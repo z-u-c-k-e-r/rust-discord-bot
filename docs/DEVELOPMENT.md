@@ -17,11 +17,32 @@ See [`VERSION_POLICY.md`](VERSION_POLICY.md) before changing Rust, crate, contai
 
 ## Initial setup
 
+You can develop using either full Docker Compose or running the bot locally with `cargo run`.
+
+### Variant 1: Full Docker Compose
+
+Runs both PostgreSQL and the bot inside the isolated Compose network:
+
 ```bash
 cp .env.example .env
+# Fill in your Discord bot credentials in .env
+docker compose up -d
+```
+
+### Variant 2: Local `cargo run` with Compose PostgreSQL
+
+Runs PostgreSQL in Docker with port `5432` mapped to `127.0.0.1` on the host, while running the bot directly:
+
+```bash
+cp .env.example .env
+cp compose.override.yaml.example compose.override.yaml
+# In .env, set: DATABASE_URL=postgres://zuckerbot:zuckerbot@127.0.0.1:5432/zuckerbot
+# And fill in your Discord credentials
 docker compose up -d postgres
 cargo run
 ```
+
+In the base deployment (`compose.yaml`), PostgreSQL's port remains strictly internal to the Compose network.
 
 For fast command iteration, set `DISCORD_DEV_GUILD_ID`. Guild commands update immediately; global command propagation is intentionally not used during normal development.
 

@@ -75,6 +75,11 @@ fn memory_store_transfers_coins_atomically() {
     ));
     assert_eq!(store.get_member_progress("guild", "sender").coins, 300);
     assert_eq!(store.get_member_progress("guild", "recipient").coins, 200);
+
+    let events = store.list_audit_events("guild", 10);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event, "coins_transferred");
+    assert_eq!(events[0].actor_id.as_deref(), Some("sender"));
 }
 
 #[test]

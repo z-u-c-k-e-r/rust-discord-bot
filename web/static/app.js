@@ -39,11 +39,13 @@ const ui = {
 const state = {
   session: null,
   guildId: null,
+  generationId: 0,
   activeTab: "modules",
   modulesData: [],
   analyticsTimer: null,
   eventSource: null,
   requestHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  lastRequestsTotal: null,
   pendingVoidCase: null,
 };
 
@@ -347,14 +349,19 @@ async function loadModules() {
     messageCard("Ładowanie konfiguracji", "Pobieranie modułów Lua z serwera...")
   );
 
+  const gen = state.generationId;
+  const targetGuild = state.guildId;
+
   try {
     const modules = await request(
-      `/api/guilds/${encodeURIComponent(state.guildId)}/modules`
+      `/api/guilds/${encodeURIComponent(targetGuild)}/modules`
     );
+    if (gen !== state.generationId || state.guildId !== targetGuild) return;
     state.modulesData = modules;
     renderModules(modules);
     updateKpis();
   } catch (error) {
+    if (gen !== state.generationId || state.guildId !== targetGuild) return;
     ui.modules.replaceChildren(
       messageCard("Nie udało się pobrać modułów", error.message)
     );
@@ -625,12 +632,17 @@ async function loadCases() {
     messageCard("Ładowanie spraw", "Pobieranie rejestru moderacji...")
   );
 
+  const gen = state.generationId;
+  const targetGuild = state.guildId;
+
   try {
     const cases = await request(
-      `/api/guilds/${encodeURIComponent(state.guildId)}/cases`
+      `/api/guilds/${encodeURIComponent(targetGuild)}/cases`
     );
+    if (gen !== state.generationId || state.guildId !== targetGuild) return;
     renderCases(cases);
   } catch (error) {
+    if (gen !== state.generationId || state.guildId !== targetGuild) return;
     ui.casesList.replaceChildren(
       messageCard("Błąd pobierania spraw moderacyjnych", error.message)
     );
@@ -891,12 +903,17 @@ async function loadAudit() {
     messageCard("Ładowanie dziennika", "Pobieranie zdarzeń audytowych...")
   );
 
+  const gen = state.generationId;
+  const targetGuild = state.guildId;
+
   try {
     const events = await request(
-      `/api/guilds/${encodeURIComponent(state.guildId)}/audit`
+      `/api/guilds/${encodeURIComponent(targetGuild)}/audit`
     );
+    if (gen !== state.generationId || state.guildId !== targetGuild) return;
     renderAudit(events);
   } catch (error) {
+    if (gen !== state.generationId || state.guildId !== targetGuild) return;
     ui.auditList.replaceChildren(
       messageCard("Błąd pobierania audytu", error.message)
     );
@@ -985,8 +1002,22 @@ function renderAnalytics(readyData) {
     `;
   }
 
-  state.requestHistory.shift();
-  state.requestHistory.push(Math.floor(Math.random() * 8) + 2);
+  const currentTotal =
+    typeof readyData.dashboard_requests_total === "number"
+      ? readyData.dashboard_requests_total
+      : null;
+
+  if (currentTotal !== null) {
+    if (state.lastRequestsTotal !== null && currentTotal >= state.lastRequestsTotal) {
+      const delta = currentTotal - state.lastRequestsTotal;
+      state.requestHistory.shift();
+      state.requestHistory.push(delta);
+    } else {
+      state.requestHistory.shift();
+      state.requestHistory.push(0);
+    }
+    state.lastRequestsTotal = currentTotal;
+  }
 
   if (ui.analyticsRequestsSparkline) {
     const width = 280;
@@ -1054,6 +1085,14 @@ function messageCard(title, body) {
 }
 
 ui.guildSelect?.addEventListener("change", async (event) => {
+  state.generationId++;
+  if (ui.voidDialog && typeof ui.voidDialog.close === "function") {
+    try { ui.voidDialog.close(); } catch {}
+  }
+  state.pendingVoidCase = null;
+  ui.modules?.replaceChildren();
+  ui.casesList?.replaceChildren();
+  ui.auditList?.replaceChildren();
   state.guildId = event.target.value;
   initRealtimeStream();
   switchTab(state.activeTab);

@@ -54,6 +54,7 @@ return {
                 description = "Przekazuje sugestię na skonfigurowany kanał społeczności.",
                 dm_permission = false,
                 options = {
+                    { type = "string", name = "text", description = "Treść sugestii.", required = true, min_length = 5, max_length = 1500 },
                     {
                         type = "string",
                         name = "category",
@@ -66,7 +67,6 @@ return {
                             { name = "Inne", value = "other" },
                         },
                     },
-                    { type = "string", name = "text", description = "Treść sugestii.", required = true, min_length = 5, max_length = 1500 },
                 },
             },
             {
@@ -74,8 +74,8 @@ return {
                 description = "Wysyła prywatne zgłoszenie do zespołu serwera.",
                 dm_permission = false,
                 options = {
-                    { type = "user", name = "user", description = "Opcjonalnie zgłaszany użytkownik.", required = false },
                     { type = "string", name = "reason", description = "Powód zgłoszenia.", required = true, min_length = 5, max_length = 1200 },
+                    { type = "user", name = "user", description = "Opcjonalnie zgłaszany użytkownik.", required = false },
                     { type = "string", name = "evidence", description = "Link, ID wiadomości albo dodatkowy kontekst.", required = false, max_length = 500 },
                 },
             },

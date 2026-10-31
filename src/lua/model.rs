@@ -92,6 +92,40 @@ impl LuaCommandDefinition {
 
         Ok(())
     }
+
+    pub fn validate_options_order(&self) -> Result<(), String> {
+        Self::validate_option_slice(&self.options, &format!("/{}", self.name))
+    }
+
+    fn validate_option_slice(options: &[LuaCommandOption], path: &str) -> Result<(), String> {
+        let mut saw_optional = false;
+        for option in options {
+            if matches!(
+                option.kind,
+                LuaOptionKind::Subcommand | LuaOptionKind::SubcommandGroup
+            ) {
+                Self::validate_option_slice(&option.options, &format!("{path} {}", option.name))?;
+            } else {
+                if option.required {
+                    if saw_optional {
+                        return Err(format!(
+                            "command {path}: required option '{}' cannot follow an optional option",
+                            option.name
+                        ));
+                    }
+                } else {
+                    saw_optional = true;
+                }
+                if !option.options.is_empty() {
+                    Self::validate_option_slice(
+                        &option.options,
+                        &format!("{path} {}", option.name),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -195,6 +229,10 @@ pub enum LuaAction {
         channel_id: Option<String>,
         content: String,
     },
+    SendDirectMessage {
+        user_id: String,
+        content: String,
+    },
     DeleteMessage {
         channel_id: String,
         message_id: String,
@@ -269,6 +307,10 @@ impl LuaAction {
                 if let Some(channel_id) = channel_id {
                     validate_snowflake(channel_id)?;
                 }
+                validate_content(content)
+            }
+            Self::SendDirectMessage { user_id, content } => {
+                validate_snowflake(user_id)?;
                 validate_content(content)
             }
             Self::DeleteMessage {
@@ -481,5 +523,28 @@ mod tests {
         }));
 
         assert!(definition.validate_contexts().is_err());
+    }
+
+    #[test]
+    fn required_option_after_optional_is_rejected() {
+        let invalid = command(json!({
+            "name": "test",
+            "description": "Test command.",
+            "options": [
+                { "type": "string", "name": "opt", "description": "optional", "required": false },
+                { "type": "string", "name": "req", "description": "required", "required": true }
+            ]
+        }));
+        assert!(invalid.validate_options_order().is_err());
+
+        let valid = command(json!({
+            "name": "test",
+            "description": "Test command.",
+            "options": [
+                { "type": "string", "name": "req", "description": "required", "required": true },
+                { "type": "string", "name": "opt", "description": "optional", "required": false }
+            ]
+        }));
+        assert!(valid.validate_options_order().is_ok());
     }
 }

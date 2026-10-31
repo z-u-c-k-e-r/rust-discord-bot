@@ -1,4 +1,15 @@
-DROP TABLE IF EXISTS moderation_cases CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'moderation_cases'
+          AND column_name = 'target_user_id'
+    ) THEN
+        ALTER TABLE moderation_cases RENAME TO legacy_moderation_cases;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS moderation_case_counters (
     guild_id TEXT PRIMARY KEY,
@@ -79,3 +90,70 @@ CREATE INDEX IF NOT EXISTS moderation_case_evidence_case_created_idx
     ON moderation_case_evidence (case_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS moderation_case_events_case_created_idx
     ON moderation_case_events (case_id, created_at ASC);
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name = 'legacy_moderation_cases'
+    ) THEN
+        INSERT INTO moderation_cases (
+            id,
+            case_number,
+            guild_id,
+            subject_user_id,
+            actor_user_id,
+            kind,
+            status,
+            severity,
+            points,
+            reason,
+            source_module,
+            visible_to_subject,
+            expires_at,
+            created_at,
+            updated_at,
+            version
+        )
+        SELECT
+            gen_random_uuid(),
+            ROW_NUMBER() OVER (
+                PARTITION BY (
+                    CASE WHEN guild_id ~ '^[1-9][0-9]{0,19}$' THEN guild_id ELSE '100000000000000000' END
+                )
+                ORDER BY id ASC
+            ),
+            CASE WHEN guild_id ~ '^[1-9][0-9]{0,19}$' THEN guild_id ELSE '100000000000000000' END,
+            CASE WHEN target_user_id ~ '^[1-9][0-9]{0,19}$' THEN target_user_id ELSE '100000000000000001' END,
+            CASE WHEN moderator_user_id ~ '^[1-9][0-9]{0,19}$' THEN moderator_user_id ELSE '100000000000000002' END,
+            CASE
+                WHEN LOWER(action) IN ('warning', 'staff_note', 'timeout', 'kick', 'ban', 'unban', 'automod') THEN LOWER(action)
+                ELSE 'other'
+            END,
+            CASE
+                WHEN expires_at IS NOT NULL AND expires_at <= NOW() THEN 'expired'
+                ELSE 'active'
+            END,
+            'medium',
+            0,
+            SUBSTRING(COALESCE(NULLIF(TRIM(reason), ''), 'Brak podanego powodu') FROM 1 FOR 2000),
+            SUBSTRING(COALESCE(NULLIF(TRIM(metadata->>'source_module'), ''), 'legacy') FROM 1 FOR 64),
+            TRUE,
+            expires_at,
+            COALESCE(created_at, NOW()),
+            COALESCE(created_at, NOW()),
+            1
+        FROM legacy_moderation_cases;
+
+        INSERT INTO moderation_case_counters (guild_id, next_case_number)
+        SELECT guild_id, MAX(case_number) + 1
+        FROM moderation_cases
+        GROUP BY guild_id
+        ON CONFLICT (guild_id) DO UPDATE
+        SET next_case_number = GREATEST(moderation_case_counters.next_case_number, EXCLUDED.next_case_number);
+
+        DROP TABLE legacy_moderation_cases CASCADE;
+    END IF;
+END $$;

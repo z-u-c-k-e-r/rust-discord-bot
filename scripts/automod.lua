@@ -62,9 +62,29 @@ local function check_discord_invites(content)
 end
 
 local function matched_domain(content, config)
+    local function clean_host(candidate)
+        candidate = string.match(candidate, "^([^/%?#:]+)") or candidate
+        candidate = string.gsub(candidate, "^[%.,:;!?%s%-_]+", "")
+        candidate = string.gsub(candidate, "[%.,:;!?%s%-_]+$", "")
+        local after_at = string.match(candidate, "@([%w%._%-]+)$")
+        if after_at then candidate = after_at end
+        return lower(candidate)
+    end
+
+    local function is_valid_domain(host)
+        local tld = string.match(host, "%.(%a%a+)$")
+        if not tld then return false end
+        for label in string.gmatch(host, "([^%.]+)") do
+            if label == "" or not string.match(label, "^[%w%-_]+$") then
+                return false
+            end
+        end
+        return true
+    end
+
     local function evaluate_host(host)
-        host = string.gsub(lower(host), "[%.,:;!?]+$", "")
-        if host == "" then return nil, nil end
+        host = clean_host(host)
+        if host == "" or not is_valid_domain(host) then return nil, nil end
 
         if not host_allowed(host, config.allowed_domains) then
             if config.block_all_links == true then
@@ -87,13 +107,18 @@ local function matched_domain(content, config)
         return nil, nil
     end
 
-    for host in string.gmatch(content, "https?://([%w%._%-]+)") do
-        local h, rule = evaluate_host(host)
+    for raw_url in string.gmatch(content, "https?://([^%s%c\"'<>()]+)") do
+        local h, rule = evaluate_host(raw_url)
         if h then return h, rule end
     end
 
-    for host in string.gmatch(content, "([%w%-_]+%.[a-z]{2,24})") do
-        local h, rule = evaluate_host(host)
+    for raw_email in string.gmatch(content, "[%w%._%-%+]+@([%w%._%-]+%.%a+)") do
+        local h, rule = evaluate_host(raw_email)
+        if h then return h, rule end
+    end
+
+    for candidate in string.gmatch(content, "([%w%-_]+%.[%w%-_%.]*%a%a+)") do
+        local h, rule = evaluate_host(candidate)
         if h then return h, rule end
     end
 

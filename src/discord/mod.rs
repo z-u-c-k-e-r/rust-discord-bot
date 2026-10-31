@@ -1,5 +1,5 @@
 mod commands;
-mod executor;
+pub mod executor;
 mod handler;
 pub mod moderation_cases;
 pub mod music;

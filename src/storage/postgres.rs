@@ -278,15 +278,16 @@ impl PostgresStore {
             return Ok(CoinTransferOutcome::SameAccount);
         }
 
-        let mut transaction = self.pool.begin().await?;
-        ensure_profile(&mut transaction, guild_id, sender_user_id).await?;
-        ensure_profile(&mut transaction, guild_id, recipient_user_id).await?;
-
         let (first_user_id, second_user_id) = if sender_user_id < recipient_user_id {
             (sender_user_id, recipient_user_id)
         } else {
             (recipient_user_id, sender_user_id)
         };
+
+        let mut transaction = self.pool.begin().await?;
+        ensure_profile(&mut transaction, guild_id, first_user_id).await?;
+        ensure_profile(&mut transaction, guild_id, second_user_id).await?;
+
         let first = lock_profile(&mut transaction, guild_id, first_user_id).await?;
         let second = lock_profile(&mut transaction, guild_id, second_user_id).await?;
         let (mut sender, mut recipient) = if first.user_id == sender_user_id {
@@ -308,6 +309,29 @@ impl PostgresStore {
         recipient.updated_at = now;
         write_profile(&mut transaction, &sender).await?;
         write_profile(&mut transaction, &recipient).await?;
+
+        let audit_data = serde_json::json!({
+            "recipient_user_id": recipient_user_id,
+            "amount": amount,
+            "sender_balance": sender.coins,
+            "recipient_balance": recipient.coins,
+        });
+
+        sqlx::query(
+            r#"
+            INSERT INTO audit_events (guild_id, actor_id, module_id, event, data, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(guild_id)
+        .bind(sender_user_id)
+        .bind("progression")
+        .bind("coins_transferred")
+        .bind(audit_data)
+        .bind(now)
+        .execute(&mut *transaction)
+        .await?;
+
         transaction.commit().await?;
 
         Ok(CoinTransferOutcome::Completed(Box::new(CoinTransfer {

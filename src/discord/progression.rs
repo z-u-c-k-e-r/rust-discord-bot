@@ -91,30 +91,24 @@ pub async fn execute(
                 )
                 .await?;
 
-            if award.leveled_up() {
-                state
-                    .storage
-                    .record_audit(
-                        Some(&guild_key),
-                        Some(&actor_key),
-                        module_id,
-                        "member_level_up",
-                        serde_json::json!({
-                            "user_id": actor_key,
-                            "previous_level": award.previous_level,
-                            "level": award.profile.level,
-                            "xp": award.profile.xp,
-                        }),
-                    )
-                    .await?;
+            let cached_member_roles = ctx
+                .cache
+                .guild(guild_id)
+                .and_then(|g| g.members.get(&actor_id).map(|m| m.roles.clone()));
 
-                let mut granted_roles = Vec::new();
-                for reward in role_rewards {
-                    if reward.level > award.previous_level
-                        && reward.level <= award.profile.level
-                        && let Ok(role_id) = reward.role_id.parse::<u64>()
+            let mut granted_roles = Vec::new();
+            for reward in role_rewards {
+                if reward.level <= award.profile.level
+                    && let Ok(role_id) = reward.role_id.parse::<u64>()
+                {
+                    let role_snowflake = RoleId::new(role_id);
+                    if let Some(ref roles) = cached_member_roles
+                        && roles.contains(&role_snowflake)
                     {
-                        let role_snowflake = RoleId::new(role_id);
+                        continue;
+                    }
+
+                    if award.leveled_up() || cached_member_roles.is_some() {
                         if let Err(err) = ctx
                             .http
                             .add_member_role(
@@ -151,6 +145,24 @@ pub async fn execute(
                         }
                     }
                 }
+            }
+
+            if award.leveled_up() {
+                state
+                    .storage
+                    .record_audit(
+                        Some(&guild_key),
+                        Some(&actor_key),
+                        module_id,
+                        "member_level_up",
+                        serde_json::json!({
+                            "user_id": actor_key,
+                            "previous_level": award.previous_level,
+                            "level": award.profile.level,
+                            "xp": award.profile.xp,
+                        }),
+                    )
+                    .await?;
 
                 if *announce_level_up && let Some(channel_id) = channel_id {
                     let template = level_up_message.as_deref().unwrap_or(
@@ -306,21 +318,14 @@ pub async fn execute(
                 .await?
             {
                 CoinTransferOutcome::Completed(transfer) => {
-                    state
-                        .storage
-                        .record_audit(
-                            Some(&guild_key),
-                            Some(&actor_key),
-                            module_id,
-                            "coins_transferred",
-                            serde_json::json!({
-                                "recipient_user_id": user_id,
-                                "amount": transfer.amount,
-                                "sender_balance": transfer.sender.coins,
-                                "recipient_balance": transfer.recipient.coins,
-                            }),
-                        )
-                        .await?;
+                    let _ = state.guild_events.send(crate::state::GuildRealtimeEvent {
+                        guild_id: guild_key.clone(),
+                        event_type: "audit_entry".to_string(),
+                        payload: serde_json::json!({
+                            "module_id": module_id,
+                            "event": "coins_transferred",
+                        }),
+                    });
                     Ok(Some(format!(
                         "✅ Przekazano **{}** monet użytkownikowi <@{}>. Twoje saldo: **{}**.",
                         transfer.amount, user_id, transfer.sender.coins,

@@ -1,0 +1,14 @@
+# Development override for running `cargo run` directly on the host.
+# Maps PostgreSQL port 5432 to 127.0.0.1 on the host while keeping it internal in base compose.yaml.
+#
+# Usage:
+#   cp compose.override.yaml.example compose.override.yaml
+#   docker compose up -d postgres
+#
+# Remember to point DATABASE_URL to 127.0.0.1:5432 in your .env file:
+#   DATABASE_URL=postgres://zuckerbot:zuckerbot@127.0.0.1:5432/zuckerbot
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"

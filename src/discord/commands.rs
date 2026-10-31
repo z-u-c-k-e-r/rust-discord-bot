@@ -57,6 +57,9 @@ fn build_command(
     definition
         .validate_contexts()
         .map_err(|message| anyhow!("command /{}: {message}", definition.name))?;
+    definition
+        .validate_options_order()
+        .map_err(|message| anyhow!("{message}"))?;
 
     let mut command = CreateCommand::new(&definition.name)
         .description(&definition.description)
@@ -300,5 +303,26 @@ mod tests {
             2
         );
         assert!(payload.get("dm_permission").is_none());
+    }
+
+    #[test]
+    fn command_with_invalid_option_ordering_is_rejected() {
+        let definition = definition(json!({
+            "name": "badcmd",
+            "description": "Invalid option order.",
+            "options": [
+                { "type": "string", "name": "opt", "description": "optional", "required": false },
+                { "type": "string", "name": "req", "description": "required", "required": true }
+            ]
+        }));
+
+        let result = build_command(&definition, RegistrationScope::Global);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("required option 'req' cannot follow an optional option")
+        );
     }
 }

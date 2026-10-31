@@ -271,6 +271,19 @@ impl MemoryStore {
         self.store_profile(sender.clone());
         self.store_profile(recipient.clone());
 
+        let _ = self.record_audit(
+            Some(guild_id),
+            Some(sender_user_id),
+            "progression",
+            "coins_transferred",
+            serde_json::json!({
+                "recipient_user_id": recipient_user_id,
+                "amount": amount,
+                "sender_balance": sender.coins,
+                "recipient_balance": recipient.coins,
+            }),
+        );
+
         CoinTransferOutcome::Completed(Box::new(CoinTransfer {
             sender,
             recipient,

@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::sync::atomic::Ordering;
 
 use axum::{
     Json,
@@ -190,6 +191,7 @@ pub async fn health_ready(
         "status": if is_ready { "ready" } else { "unready" },
         "version": env!("CARGO_PKG_VERSION"),
         "uptime_seconds": state.app.metrics.uptime_seconds(),
+        "dashboard_requests_total": state.app.metrics.dashboard_requests_total.load(Ordering::Relaxed),
         "checks": checks,
     });
 
@@ -521,6 +523,18 @@ pub async fn add_guild_case_note(
             }),
         });
 
+    let _ = state
+        .app
+        .guild_events
+        .send(crate::state::GuildRealtimeEvent {
+            guild_id: guild_id.clone(),
+            event_type: "audit_entry".to_string(),
+            payload: json!({
+                "module_id": "dashboard",
+                "event": "case_note_added",
+            }),
+        });
+
     Ok(Json(note))
 }
 
@@ -551,17 +565,12 @@ pub async fn void_guild_case(
         .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator użytkownika."))?;
 
     let now = Utc::now();
-    let version = if payload.expected_version <= 0 {
-        let current = state
-            .app
-            .moderation_cases
-            .get_case(guild_u64, case_number, now)
-            .await
-            .map_err(ApiError::from)?;
-        current.case.version
-    } else {
-        payload.expected_version
-    };
+    if payload.expected_version <= 0 {
+        return Err(ApiError::bad_request(
+            "Wymagane jest dodatnie expected_version do kontroli wersji.",
+        ));
+    }
+    let version = payload.expected_version;
 
     let voided = state
         .app
@@ -604,6 +613,18 @@ pub async fn void_guild_case(
             }),
         });
 
+    let _ = state
+        .app
+        .guild_events
+        .send(crate::state::GuildRealtimeEvent {
+            guild_id: guild_id.clone(),
+            event_type: "audit_entry".to_string(),
+            payload: json!({
+                "module_id": "dashboard",
+                "event": "case_voided",
+            }),
+        });
+
     Ok(Json(voided))
 }
 
@@ -627,17 +648,12 @@ pub async fn update_guild_case(
         .map_err(|_| ApiError::bad_request("Niepoprawny identyfikator użytkownika."))?;
 
     let now = Utc::now();
-    let version = if payload.expected_version <= 0 {
-        let current = state
-            .app
-            .moderation_cases
-            .get_case(guild_u64, case_number, now)
-            .await
-            .map_err(ApiError::from)?;
-        current.case.version
-    } else {
-        payload.expected_version
-    };
+    if payload.expected_version <= 0 {
+        return Err(ApiError::bad_request(
+            "Wymagane jest dodatnie expected_version do kontroli wersji.",
+        ));
+    }
+    let version = payload.expected_version;
 
     let sev = match payload.severity.as_deref() {
         Some(s) => Some(
@@ -688,6 +704,18 @@ pub async fn update_guild_case(
                 "case_number": case_number,
                 "version": updated.version,
                 "action": "edited",
+            }),
+        });
+
+    let _ = state
+        .app
+        .guild_events
+        .send(crate::state::GuildRealtimeEvent {
+            guild_id: guild_id.clone(),
+            event_type: "audit_entry".to_string(),
+            payload: json!({
+                "module_id": "dashboard",
+                "event": "case_edited",
             }),
         });
 

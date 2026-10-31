@@ -4,8 +4,8 @@ use anyhow::{Context as _, Result, anyhow};
 use chrono::{Duration, Utc};
 use serenity::{
     all::{
-        ChannelId, CommandInteraction, GuildId, Member, MessageId, Permissions, Role, RoleId,
-        UserId,
+        ChannelId, ChannelType, CommandInteraction, GuildId, Member, MessageId, Permissions, Role,
+        RoleId, UserId,
     },
     builder::{
         CreateAllowedMentions, CreateInteractionResponse, CreateInteractionResponseFollowup,
@@ -18,13 +18,20 @@ use crate::{AppState, lua::LuaAction};
 
 use super::{moderation_cases, music, progression, scheduler, tickets};
 
-struct ActionOrigin {
-    guild_id: Option<GuildId>,
-    channel_id: Option<ChannelId>,
-    actor_id: Option<UserId>,
-    actor_permissions: Permissions,
-    app_permissions: Permissions,
-    enforce_actor_permissions: bool,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChannelPurpose {
+    SendMessage,
+    ManageMessages,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActionOrigin {
+    pub guild_id: Option<GuildId>,
+    pub channel_id: Option<ChannelId>,
+    pub actor_id: Option<UserId>,
+    pub actor_permissions: Permissions,
+    pub app_permissions: Permissions,
+    pub enforce_actor_permissions: bool,
 }
 
 pub async fn execute_command_actions(
@@ -162,12 +169,67 @@ pub async fn execute_event_actions(
     for action in actions {
         match action {
             LuaAction::Reply { content, .. } => {
-                let channel_id =
-                    channel_id.ok_or_else(|| anyhow!("event reply has no channel context"))?;
-                send_message(ctx, channel_id, content).await?;
+                let target_channel = match resolve_and_validate_channel(
+                    ctx,
+                    &origin,
+                    None,
+                    ChannelPurpose::SendMessage,
+                )
+                .await
+                {
+                    Ok(cid) => cid,
+                    Err(err) => {
+                        tracing::warn!(error = %err, module_id, "Brak lub błąd kanału dla event reply");
+                        let _ = audit_action(
+                            state,
+                            &origin,
+                            module_id,
+                            "action_denied",
+                            serde_json::json!({
+                                "action": "reply",
+                                "error": err.to_string(),
+                            }),
+                        )
+                        .await;
+                        continue;
+                    }
+                };
+                if let Err(err) = send_message(ctx, target_channel, content).await {
+                    tracing::warn!(error = %err, module_id, "Błąd wysyłania odpowiedzi na zdarzenie");
+                    let _ = audit_action(
+                        state,
+                        &origin,
+                        module_id,
+                        "action_failed",
+                        serde_json::json!({
+                            "action": "reply",
+                            "error": err.to_string(),
+                        }),
+                    )
+                    .await;
+                }
             }
             _ => {
-                execute_action(ctx, state, module_id, &origin, action).await?;
+                if let Err(err) = execute_action(ctx, state, module_id, &origin, action).await {
+                    tracing::warn!(
+                        error = %err,
+                        module_id,
+                        ?action,
+                        "Błąd lub odmowa wykonania akcji zdarzenia"
+                    );
+                    let _ = audit_action(
+                        state,
+                        &origin,
+                        module_id,
+                        "action_denied",
+                        serde_json::json!({
+                            "module_id": module_id,
+                            "action": format!("{action:?}"),
+                            "error": err.to_string(),
+                        }),
+                    )
+                    .await;
+                }
             }
         }
     }
@@ -244,15 +306,69 @@ async fn execute_action(
             channel_id,
             content,
         } => {
-            let channel_id = resolve_channel(channel_id.as_deref(), origin.channel_id)?;
+            let channel_id = resolve_and_validate_channel(
+                ctx,
+                origin,
+                channel_id.as_deref(),
+                ChannelPurpose::SendMessage,
+            )
+            .await?;
             send_message(ctx, channel_id, content).await?;
+            Ok(None)
+        }
+        LuaAction::SendDirectMessage { user_id, content } => {
+            let target_user = UserId::new(parse_snowflake(user_id)?);
+            match target_user.create_dm_channel(&ctx.http).await {
+                Ok(dm_channel) => {
+                    if let Err(err) = dm_channel
+                        .send_message(
+                            &ctx.http,
+                            CreateMessage::new()
+                                .content(content)
+                                .allowed_mentions(CreateAllowedMentions::new()),
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            user_id = %user_id,
+                            error = %err,
+                            "Failed to deliver direct message"
+                        );
+                    } else {
+                        audit_action(
+                            state,
+                            origin,
+                            module_id,
+                            "send_direct_message",
+                            serde_json::json!({
+                                "target_user_id": user_id,
+                            }),
+                        )
+                        .await?;
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        user_id = %user_id,
+                        error = %err,
+                        "Failed to create DM channel"
+                    );
+                }
+            }
             Ok(None)
         }
         LuaAction::DeleteMessage {
             channel_id,
             message_id,
         } => {
-            ChannelId::new(parse_snowflake(channel_id)?)
+            let channel_id = resolve_and_validate_channel(
+                ctx,
+                origin,
+                Some(channel_id.as_str()),
+                ChannelPurpose::ManageMessages,
+            )
+            .await?;
+            channel_id
                 .delete_message(&ctx.http, MessageId::new(parse_snowflake(message_id)?))
                 .await?;
             Ok(None)
@@ -264,7 +380,12 @@ async fn execute_action(
         } => {
             let guild_id = require_guild(origin)?;
             let target_id = UserId::new(parse_snowflake(user_id)?);
-            ensure_member_hierarchy(ctx, guild_id, origin.actor_id, target_id).await?;
+            let authorizing_actor = if origin.enforce_actor_permissions {
+                origin.actor_id
+            } else {
+                None
+            };
+            ensure_member_hierarchy(ctx, guild_id, authorizing_actor, target_id).await?;
             let until = (Utc::now() + Duration::seconds(i64::try_from(*seconds)?)).to_rfc3339();
             guild_id
                 .edit_member(
@@ -290,7 +411,12 @@ async fn execute_action(
         LuaAction::KickMember { user_id, reason } => {
             let guild_id = require_guild(origin)?;
             let target_id = UserId::new(parse_snowflake(user_id)?);
-            ensure_member_hierarchy(ctx, guild_id, origin.actor_id, target_id).await?;
+            let authorizing_actor = if origin.enforce_actor_permissions {
+                origin.actor_id
+            } else {
+                None
+            };
+            ensure_member_hierarchy(ctx, guild_id, authorizing_actor, target_id).await?;
             guild_id
                 .kick_with_reason(
                     &ctx.http,
@@ -318,7 +444,12 @@ async fn execute_action(
         } => {
             let guild_id = require_guild(origin)?;
             let target_id = UserId::new(parse_snowflake(user_id)?);
-            ensure_member_hierarchy(ctx, guild_id, origin.actor_id, target_id).await?;
+            let authorizing_actor = if origin.enforce_actor_permissions {
+                origin.actor_id
+            } else {
+                None
+            };
+            ensure_member_hierarchy(ctx, guild_id, authorizing_actor, target_id).await?;
             guild_id
                 .ban_with_reason(
                     &ctx.http,
@@ -402,7 +533,13 @@ async fn execute_action(
             Ok(None)
         }
         LuaAction::Purge { channel_id, amount } => {
-            let channel_id = resolve_channel(channel_id.as_deref(), origin.channel_id)?;
+            let channel_id = resolve_and_validate_channel(
+                ctx,
+                origin,
+                channel_id.as_deref(),
+                ChannelPurpose::ManageMessages,
+            )
+            .await?;
             let messages = channel_id
                 .messages(&ctx.http, GetMessages::new().limit(*amount))
                 .await?;
@@ -527,6 +664,16 @@ async fn execute_action(
                     serde_json::to_value(data)?,
                 )
                 .await?;
+            if let Some(gid) = origin.guild_id {
+                let _ = state.guild_events.send(crate::state::GuildRealtimeEvent {
+                    guild_id: gid.get().to_string(),
+                    event_type: "audit_entry".to_string(),
+                    payload: serde_json::json!({
+                        "module_id": module_id,
+                        "event": event,
+                    }),
+                });
+            }
             Ok(None)
         }
     }
@@ -567,14 +714,65 @@ fn require_guild(origin: &ActionOrigin) -> Result<GuildId> {
         .ok_or_else(|| anyhow!("ta akcja może zostać wykonana wyłącznie na serwerze"))
 }
 
-fn resolve_channel(value: Option<&str>, fallback: Option<ChannelId>) -> Result<ChannelId> {
-    match value {
-        Some(value) => Ok(ChannelId::new(parse_snowflake(value)?)),
-        None => fallback.ok_or_else(|| anyhow!("brakuje kanału dla tej akcji")),
+pub async fn resolve_and_validate_channel(
+    ctx: &Context,
+    origin: &ActionOrigin,
+    channel_value: Option<&str>,
+    purpose: ChannelPurpose,
+) -> Result<ChannelId> {
+    let channel_id = match channel_value {
+        Some(value) => ChannelId::new(parse_snowflake(value)?),
+        None => origin
+            .channel_id
+            .ok_or_else(|| anyhow!("brakuje kanału dla tej akcji"))?,
+    };
+
+    let channel = channel_id
+        .to_channel(ctx)
+        .await
+        .with_context(|| format!("nie można odczytać danych o kanale {channel_id}"))?;
+
+    match channel {
+        serenity::model::channel::Channel::Guild(guild_channel) => {
+            if let Some(expected_guild_id) = origin.guild_id
+                && guild_channel.guild_id != expected_guild_id
+            {
+                return Err(anyhow!(
+                    "kanał docelowy {channel_id} należy do obcego serwera {}",
+                    guild_channel.guild_id
+                ));
+            }
+
+            match purpose {
+                ChannelPurpose::SendMessage => {
+                    if guild_channel.kind == ChannelType::Category {
+                        return Err(anyhow!("kategoria kanałów nie może być celem wiadomości"));
+                    }
+                }
+                ChannelPurpose::ManageMessages => {
+                    if guild_channel.kind == ChannelType::Category {
+                        return Err(anyhow!(
+                            "kategoria kanałów nie może być celem usuwania wiadomości"
+                        ));
+                    }
+                }
+            }
+
+            Ok(guild_channel.id)
+        }
+        serenity::model::channel::Channel::Private(private_channel) => {
+            if origin.guild_id.is_some() {
+                return Err(anyhow!(
+                    "kanał prywatny {channel_id} nie należy do tego serwera"
+                ));
+            }
+            Ok(private_channel.id)
+        }
+        _ => Err(anyhow!("nieobsługiwany typ kanału {channel_id}")),
     }
 }
 
-fn parse_snowflake(value: &str) -> Result<u64> {
+pub(crate) fn parse_snowflake(value: &str) -> Result<u64> {
     let parsed = value
         .parse::<u64>()
         .with_context(|| format!("{value:?} nie jest prawidłowym identyfikatorem Discorda"))?;
@@ -584,7 +782,7 @@ fn parse_snowflake(value: &str) -> Result<u64> {
     Ok(parsed)
 }
 
-pub(crate) async fn ensure_member_hierarchy(
+pub async fn ensure_member_hierarchy(
     ctx: &Context,
     guild_id: GuildId,
     actor_id: Option<UserId>,
@@ -596,7 +794,18 @@ pub(crate) async fn ensure_member_hierarchy(
     }
 
     let target = guild_id.member(&ctx.http, target_id).await?;
-    let bot_id = ctx.cache.current_user().id;
+    let bot_id = {
+        let id = ctx.cache.current_user().id;
+        if id.get() == 0 {
+            ctx.http
+                .get_current_user()
+                .await
+                .map(|u| u.id)
+                .unwrap_or(id)
+        } else {
+            id
+        }
+    };
     let bot = guild_id.member(&ctx.http, bot_id).await?;
     let target_rank = member_rank(&target, &guild.roles);
     let bot_rank = member_rank(&bot, &guild.roles);
@@ -642,7 +851,18 @@ async fn ensure_role_hierarchy(
     }
     let target_rank = role_rank(role);
 
-    let bot_id = ctx.cache.current_user().id;
+    let bot_id = {
+        let id = ctx.cache.current_user().id;
+        if id.get() == 0 {
+            ctx.http
+                .get_current_user()
+                .await
+                .map(|u| u.id)
+                .unwrap_or(id)
+        } else {
+            id
+        }
+    };
     let bot = guild_id.member(&ctx.http, bot_id).await?;
     if !rank_is_higher(member_rank(&bot, &guild.roles), target_rank) {
         return Err(anyhow!(
@@ -704,5 +924,16 @@ async fn audit_action(
             event,
             data,
         )
-        .await
+        .await?;
+    if let Some(ref gid) = guild_id {
+        let _ = state.guild_events.send(crate::state::GuildRealtimeEvent {
+            guild_id: gid.clone(),
+            event_type: "audit_entry".to_string(),
+            payload: serde_json::json!({
+                "module_id": module_id,
+                "event": event,
+            }),
+        });
+    }
+    Ok(())
 }

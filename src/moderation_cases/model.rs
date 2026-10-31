@@ -158,12 +158,81 @@ impl FromStr for CaseSeverity {
     }
 }
 
+mod snowflake_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrInt {
+            String(String),
+            Int(u64),
+        }
+
+        match StringOrInt::deserialize(deserializer)? {
+            StringOrInt::String(s) => s.parse::<u64>().map_err(serde::de::Error::custom),
+            StringOrInt::Int(i) => Ok(i),
+        }
+    }
+}
+
+mod opt_snowflake_string {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(v) => serializer.serialize_some(&v.to_string()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum OptStringOrInt {
+            String(String),
+            Int(u64),
+        }
+
+        match Option::<OptStringOrInt>::deserialize(deserializer)? {
+            Some(OptStringOrInt::String(s)) => {
+                if s.trim().is_empty() {
+                    Ok(None)
+                } else {
+                    s.parse::<u64>().map(Some).map_err(serde::de::Error::custom)
+                }
+            }
+            Some(OptStringOrInt::Int(i)) => Ok(Some(i)),
+            None => Ok(None),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModerationCase {
     pub id: Uuid,
     pub case_number: i64,
+    #[serde(with = "snowflake_string")]
     pub guild_id: u64,
+    #[serde(with = "snowflake_string")]
     pub subject_user_id: u64,
+    #[serde(with = "snowflake_string")]
     pub actor_user_id: u64,
     pub kind: CaseKind,
     pub status: CaseStatus,
@@ -173,6 +242,7 @@ pub struct ModerationCase {
     pub source_module: String,
     pub visible_to_subject: bool,
     pub expires_at: Option<DateTime<Utc>>,
+    #[serde(with = "opt_snowflake_string", default)]
     pub voided_by_user_id: Option<u64>,
     pub void_reason: Option<String>,
     pub voided_at: Option<DateTime<Utc>>,
@@ -185,6 +255,7 @@ pub struct ModerationCase {
 pub struct CaseNote {
     pub id: Uuid,
     pub case_id: Uuid,
+    #[serde(with = "snowflake_string")]
     pub author_user_id: u64,
     pub body: String,
     pub visible_to_subject: bool,
@@ -195,6 +266,7 @@ pub struct CaseNote {
 pub struct CaseEvidence {
     pub id: Uuid,
     pub case_id: Uuid,
+    #[serde(with = "snowflake_string")]
     pub author_user_id: u64,
     pub label: String,
     pub value: String,
@@ -205,6 +277,7 @@ pub struct CaseEvidence {
 pub struct CaseEvent {
     pub id: Uuid,
     pub case_id: Uuid,
+    #[serde(with = "snowflake_string")]
     pub actor_user_id: u64,
     pub event_type: String,
     pub payload: serde_json::Value,
@@ -403,4 +476,80 @@ fn validate_text(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    #[test]
+    fn snowflakes_serialize_as_strings_and_deserialize_from_both() {
+        let case = ModerationCase {
+            id: Uuid::new_v4(),
+            case_number: 1,
+            guild_id: 1234567890123456789,
+            subject_user_id: 9876543210987654321,
+            actor_user_id: 1111222233334444555,
+            kind: CaseKind::Warning,
+            status: CaseStatus::Active,
+            severity: CaseSeverity::Medium,
+            points: 5,
+            reason: "Testing snowflake serialization".to_string(),
+            source_module: "moderation".to_string(),
+            visible_to_subject: true,
+            expires_at: None,
+            voided_by_user_id: Some(5555666677778888999),
+            void_reason: None,
+            voided_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            version: 1,
+        };
+
+        let serialized = serde_json::to_string(&case).expect("case should serialize");
+        assert!(serialized.contains(r#""guild_id":"1234567890123456789""#));
+        assert!(serialized.contains(r#""subject_user_id":"9876543210987654321""#));
+        assert!(serialized.contains(r#""actor_user_id":"1111222233334444555""#));
+        assert!(serialized.contains(r#""voided_by_user_id":"5555666677778888999""#));
+
+        let note = CaseNote {
+            id: Uuid::new_v4(),
+            case_id: case.id,
+            author_user_id: 9876543210987654321,
+            body: "Internal note".to_string(),
+            visible_to_subject: false,
+            created_at: Utc::now(),
+        };
+        let note_json = serde_json::to_string(&note).expect("note should serialize");
+        assert!(note_json.contains(r#""author_user_id":"9876543210987654321""#));
+
+        // Deserialization from JSON string
+        let deserialized: ModerationCase =
+            serde_json::from_str(&serialized).expect("should deserialize from string snowflakes");
+        assert_eq!(deserialized.subject_user_id, 9876543210987654321);
+
+        // Deserialization from legacy numeric snowflakes
+        let legacy_json = serde_json::json!({
+            "id": case.id,
+            "case_number": 1,
+            "guild_id": 1234567890123456789_u64,
+            "subject_user_id": 9876543210987654321_u64,
+            "actor_user_id": 1111222233334444555_u64,
+            "kind": "warning",
+            "status": "active",
+            "severity": "medium",
+            "points": 5,
+            "reason": "Test",
+            "source_module": "moderation",
+            "visible_to_subject": true,
+            "created_at": Utc::now(),
+            "updated_at": Utc::now(),
+            "version": 1
+        });
+        let from_numbers: ModerationCase = serde_json::from_value(legacy_json)
+            .expect("should deserialize from numeric snowflakes");
+        assert_eq!(from_numbers.subject_user_id, 9876543210987654321);
+    }
 }

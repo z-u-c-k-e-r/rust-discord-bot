@@ -62,6 +62,10 @@ impl MemorySchedulerStore {
         result
     }
 
+    pub fn get_job(&self, job_id: &str) -> Option<ScheduledJob> {
+        self.lock().get(job_id).cloned()
+    }
+
     pub fn mutate_job(
         &self,
         guild_id: &str,
@@ -131,6 +135,24 @@ impl MemorySchedulerStore {
         limit: u8,
     ) -> Vec<ScheduledJob> {
         let mut jobs = self.lock();
+
+        for job in jobs.values_mut() {
+            if job.status == STATUS_PROCESSING
+                && job
+                    .locked_at
+                    .is_some_and(|locked_at| locked_at < stale_before)
+                && job.attempts >= job.max_attempts
+            {
+                job.status = crate::scheduler::STATUS_FAILED.to_owned();
+                job.last_error =
+                    Some("worker lease expired after reaching maximum attempts".to_owned());
+                job.completed_at = Some(now);
+                job.locked_by = None;
+                job.locked_at = None;
+                job.updated_at = now;
+            }
+        }
+
         let mut candidates = jobs
             .values()
             .filter(|job| job.is_claimable(now, stale_before))

@@ -87,6 +87,13 @@ impl SchedulerStore {
         }
     }
 
+    pub async fn get_job(&self, job_id: &str) -> Result<Option<ScheduledJob>> {
+        match self {
+            Self::Memory(store) => Ok(store.get_job(job_id)),
+            Self::Postgres(store) => Ok(store.get_job(job_id).await?),
+        }
+    }
+
     pub async fn mutate_job(
         &self,
         guild_id: &str,

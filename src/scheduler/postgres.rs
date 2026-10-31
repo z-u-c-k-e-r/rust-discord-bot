@@ -312,6 +312,43 @@ impl PostgresSchedulerStore {
         Ok(JobMutationOutcome::Updated(Box::new(updated)))
     }
 
+    pub async fn get_job(&self, job_id: &str) -> anyhow::Result<Option<ScheduledJob>> {
+        if Uuid::parse_str(job_id).is_err() {
+            return Ok(None);
+        }
+        Ok(sqlx::query_as::<_, ScheduledJob>(
+            r#"
+            SELECT
+                id::text AS id,
+                guild_id,
+                module_id,
+                channel_id,
+                creator_user_id,
+                content,
+                mention_creator,
+                run_at,
+                repeat_every_seconds,
+                remaining_runs,
+                max_attempts,
+                attempts,
+                run_count,
+                status,
+                locked_by,
+                locked_at,
+                last_error,
+                last_run_at,
+                completed_at,
+                created_at,
+                updated_at
+            FROM scheduled_jobs
+            WHERE id = $1::uuid
+            "#,
+        )
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
     pub async fn renew_lease(
         &self,
         job_id: &str,
@@ -348,6 +385,25 @@ impl PostgresSchedulerStore {
         stale_before: DateTime<Utc>,
         limit: u8,
     ) -> anyhow::Result<Vec<ScheduledJob>> {
+        let _ = sqlx::query(
+            r#"
+            UPDATE scheduled_jobs
+            SET status = 'failed',
+                last_error = 'worker lease expired after reaching maximum attempts',
+                completed_at = $1,
+                locked_by = NULL,
+                locked_at = NULL,
+                updated_at = $1
+            WHERE status = 'processing'
+              AND locked_at < $2
+              AND attempts >= max_attempts
+            "#,
+        )
+        .bind(now)
+        .bind(stale_before)
+        .execute(&self.pool)
+        .await?;
+
         Ok(sqlx::query_as::<_, ScheduledJob>(
             r#"
             WITH due AS (

@@ -5,8 +5,8 @@ use dashmap::DashMap;
 use serde_json::{Map, Value, json};
 use serenity::{
     all::{
-        CommandDataOption, CommandDataOptionValue, CommandInteraction, GuildId, Interaction,
-        Member, Message, MessageUpdateEvent, Ready, VoiceState,
+        ChannelId, CommandDataOption, CommandDataOptionValue, CommandInteraction, GuildId,
+        Interaction, Member, Message, MessageId, MessageUpdateEvent, Ready, User, VoiceState,
     },
     async_trait,
     builder::{CreateAllowedMentions, CreateInteractionResponse, CreateInteractionResponseMessage},
@@ -294,6 +294,9 @@ impl EventHandler for Handler {
         let recent_joins_count = entry.len();
         drop(entry);
 
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone());
+        let member_count = ctx.cache.guild(guild_id).map(|g| g.member_count);
+
         let event = LuaEventContext {
             name: "guild_member_add".to_owned(),
             guild_id: Some(guild_id.get().to_string()),
@@ -312,6 +315,8 @@ impl EventHandler for Handler {
                 "joined_at": new_member.joined_at,
                 "recent_joins_count": recent_joins_count,
                 "recent_joins_window_seconds": 60,
+                "guild_name": guild_name,
+                "member_count": member_count,
             }),
             config: Value::Null,
         };
@@ -324,6 +329,93 @@ impl EventHandler for Handler {
             Some(guild_id),
             None,
             Some(new_member.user.id),
+        )
+        .await;
+    }
+
+    async fn guild_member_removal(
+        &self,
+        ctx: Context,
+        guild_id: GuildId,
+        user: User,
+        member_data_if_available: Option<Member>,
+    ) {
+        self.state
+            .metrics
+            .discord_events_total
+            .fetch_add(1, Ordering::Relaxed);
+
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone());
+        let member_count = ctx.cache.guild(guild_id).map(|g| g.member_count);
+
+        let event = LuaEventContext {
+            name: "guild_member_remove".to_owned(),
+            guild_id: Some(guild_id.get().to_string()),
+            channel_id: None,
+            actor_id: Some(user.id.get().to_string()),
+            data: json!({
+                "user": {
+                    "id": user.id,
+                    "name": user.name,
+                    "global_name": user.global_name,
+                    "bot": user.bot,
+                },
+                "roles": member_data_if_available.as_ref().map(|m| &m.roles),
+                "joined_at": member_data_if_available.as_ref().and_then(|m| m.joined_at),
+                "guild_name": guild_name,
+                "member_count": member_count,
+            }),
+            config: Value::Null,
+        };
+
+        run_event(
+            &ctx,
+            &self.state,
+            "guild_member_remove",
+            event,
+            Some(guild_id),
+            None,
+            Some(user.id),
+        )
+        .await;
+    }
+
+    async fn message_delete(
+        &self,
+        ctx: Context,
+        channel_id: ChannelId,
+        deleted_message_id: MessageId,
+        guild_id: Option<GuildId>,
+    ) {
+        self.state
+            .metrics
+            .discord_events_total
+            .fetch_add(1, Ordering::Relaxed);
+
+        let Some(guild_id) = guild_id else {
+            return;
+        };
+
+        let event = LuaEventContext {
+            name: "message_delete".to_owned(),
+            guild_id: Some(guild_id.get().to_string()),
+            channel_id: Some(channel_id.get().to_string()),
+            actor_id: None,
+            data: json!({
+                "message_id": deleted_message_id.get().to_string(),
+                "channel_id": channel_id.get().to_string(),
+            }),
+            config: Value::Null,
+        };
+
+        run_event(
+            &ctx,
+            &self.state,
+            "message_delete",
+            event,
+            Some(guild_id),
+            Some(channel_id),
+            None,
         )
         .await;
     }

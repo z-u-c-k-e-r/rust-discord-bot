@@ -6,7 +6,7 @@ use zuckerbot::{
     lua::{LuaAction, LuaEngine, LuaExecutionContext, LuaLimits, SchedulerOperation},
     scheduler::{
         CreateJobOutcome, JobMutation, JobMutationOutcome, NewScheduledJob, STATUS_ACTIVE,
-        STATUS_COMPLETED, STATUS_PROCESSING, SchedulerStore,
+        STATUS_COMPLETED, STATUS_FAILED, STATUS_PROCESSING, SchedulerStore,
     },
 };
 
@@ -334,4 +334,64 @@ async fn renew_lease_rejects_unauthorized_worker_or_inactive_job() {
         .await
         .expect("renew_lease call should succeed");
     assert!(!completed_renewal);
+}
+
+#[tokio::test]
+async fn expired_lease_with_exhausted_attempts_marks_job_failed_and_frees_quota() {
+    let store = SchedulerStore::memory();
+    let now = Utc::now();
+    let mut job = new_job(now - Duration::seconds(1));
+    job.max_attempts = 1;
+    let created = created_job(&store, job, 1).await;
+
+    // Worker A claims the job (attempt 1 of 1)
+    let claimed = store
+        .claim_due("worker-a", now, now - Duration::seconds(60), 1)
+        .await
+        .expect("claim should succeed");
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].attempts, 1);
+
+    // User cannot create a second job because limit is 1 and job is in processing
+    let mut job2 = new_job(now + Duration::seconds(100));
+    job2.max_attempts = 1;
+    let outcome = store
+        .create_job(job2.clone(), 1)
+        .await
+        .expect("create_job should succeed");
+    assert!(matches!(outcome, CreateJobOutcome::LimitReached { .. }));
+
+    // Time passes past lease (65s > 60s lease window)
+    let stale_before = (now + Duration::seconds(65)) - Duration::seconds(60);
+    // Worker B calls claim_due
+    let claimed_b = store
+        .claim_due("worker-b", now + Duration::seconds(65), stale_before, 10)
+        .await
+        .expect("claim_due should succeed");
+    assert!(
+        claimed_b.is_empty(),
+        "exhausted attempts should not be reclaimed as active"
+    );
+
+    // The job was marked as failed in the store
+    let failed_job = store
+        .get_job(&created.id)
+        .await
+        .expect("get_job should succeed")
+        .expect("job should exist");
+    assert_eq!(failed_job.status, STATUS_FAILED);
+    assert!(
+        failed_job
+            .last_error
+            .as_deref()
+            .unwrap_or("")
+            .contains("expired")
+    );
+
+    // User limit is now freed, job2 can be created!
+    let outcome2 = store
+        .create_job(job2, 1)
+        .await
+        .expect("create_job should succeed");
+    assert!(matches!(outcome2, CreateJobOutcome::Created(_)));
 }

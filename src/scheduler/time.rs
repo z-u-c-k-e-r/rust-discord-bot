@@ -39,12 +39,30 @@ pub fn parse_schedule_time(
         .trim();
 
     let target = match parse_duration_seconds(without_prefix) {
-        Ok(seconds) => now
-            .checked_add_signed(Duration::seconds(
+        Ok(seconds) => {
+            if seconds > maximum_delay_seconds {
+                return Err(ScheduleTimeError::TooFar {
+                    maximum_seconds: maximum_delay_seconds,
+                });
+            }
+            if seconds < u64::from(minimum_delay_seconds) {
+                return Err(ScheduleTimeError::TooSoon {
+                    minimum_seconds: minimum_delay_seconds,
+                });
+            }
+            let duration = Duration::try_seconds(
                 i64::try_from(seconds).map_err(|_| ScheduleTimeError::Overflow)?,
-            ))
-            .ok_or(ScheduleTimeError::Overflow)?,
-        Err(ScheduleTimeError::UnsupportedUnit | ScheduleTimeError::Overflow) => {
+            )
+            .ok_or(ScheduleTimeError::Overflow)?;
+            now.checked_add_signed(duration)
+                .ok_or(ScheduleTimeError::Overflow)?
+        }
+        Err(ScheduleTimeError::Overflow) => {
+            return Err(ScheduleTimeError::TooFar {
+                maximum_seconds: maximum_delay_seconds,
+            });
+        }
+        Err(ScheduleTimeError::UnsupportedUnit) => {
             return parse_absolute(value, now, minimum_delay_seconds, maximum_delay_seconds);
         }
         Err(_) => parse_absolute_timestamp(value)?,
@@ -200,5 +218,55 @@ mod tests {
     fn repeat_interval_is_bounded() {
         assert_eq!(parse_repeat_interval("1h"), Ok(3_600));
         assert!(parse_repeat_interval("30s").is_err());
+    }
+
+    #[test]
+    fn extreme_duration_does_not_panic_and_enforces_boundaries() {
+        use super::ScheduleTimeError;
+
+        let now = Utc
+            .with_ymd_and_hms(2026, 9, 3, 10, 0, 0)
+            .single()
+            .expect("valid test time");
+
+        // Exact maximum delay succeeds
+        let exact_max = parse_schedule_time("86400s", now, 10, 86_400);
+        assert!(exact_max.is_ok());
+
+        // Maximum + 1 second returns TooFar
+        assert_eq!(
+            parse_schedule_time("86401s", now, 10, 86_400),
+            Err(ScheduleTimeError::TooFar {
+                maximum_seconds: 86_400
+            })
+        );
+
+        // Extreme values that would cause Duration::seconds to overflow / panic
+        assert_eq!(
+            parse_schedule_time("9223372036854775807s", now, 10, 86_400),
+            Err(ScheduleTimeError::TooFar {
+                maximum_seconds: 86_400
+            })
+        );
+        assert_eq!(
+            parse_schedule_time("18446744073709551615s", now, 10, 86_400),
+            Err(ScheduleTimeError::TooFar {
+                maximum_seconds: 86_400
+            })
+        );
+        assert_eq!(
+            parse_schedule_time("999999999999999999999999999999s", now, 10, 86_400),
+            Err(ScheduleTimeError::TooFar {
+                maximum_seconds: 86_400
+            })
+        );
+
+        // Multiple units with large numbers
+        assert_eq!(
+            parse_schedule_time("999999w 999999d 999999h", now, 10, 86_400),
+            Err(ScheduleTimeError::TooFar {
+                maximum_seconds: 86_400
+            })
+        );
     }
 }

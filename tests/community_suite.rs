@@ -48,6 +48,15 @@ async fn bundled_suite_registers_expected_modules_and_commands() {
         "expected the expanded command catalog"
     );
 
+    for def in &commands {
+        assert!(
+            def.validate_options_order().is_ok(),
+            "bundled command /{} has invalid option ordering: {:?}",
+            def.name,
+            def.validate_options_order().err()
+        );
+    }
+
     for (command, module_id) in [
         ("calculate", "utility"),
         ("coinflip", "games"),
@@ -262,6 +271,61 @@ async fn automod_intercepts_message_update_with_discord_invite() {
 }
 
 #[tokio::test]
+async fn automod_detects_naked_domains_and_userinfo_urls() {
+    let engine = engine();
+
+    // 1. Naked domain
+    let event1 = LuaEventContext {
+        name: "message_create".to_owned(),
+        guild_id: Some("100000000000000001".to_owned()),
+        channel_id: Some("100000000000000002".to_owned()),
+        actor_id: Some("100000000000000003".to_owned()),
+        data: json!({
+            "message_id": "100000000000000010",
+            "content": "Check out grabify.link for free nitro!",
+            "attachments": []
+        }),
+        config: json!({
+            "block_suspicious_links": true,
+            "delete_messages": true
+        }),
+    };
+    let actions1 = engine
+        .execute_event("automod", "message_create", event1)
+        .await
+        .expect("automod event should execute");
+    assert!(
+        matches!(actions1.first(), Some(LuaAction::DeleteMessage { .. })),
+        "expected delete message for naked suspicious domain"
+    );
+
+    // 2. URL with userinfo: https://user:pass@grabify.link/path
+    let event2 = LuaEventContext {
+        name: "message_create".to_owned(),
+        guild_id: Some("100000000000000001".to_owned()),
+        channel_id: Some("100000000000000002".to_owned()),
+        actor_id: Some("100000000000000003".to_owned()),
+        data: json!({
+            "message_id": "100000000000000011",
+            "content": "Click https://admin:secret@grabify.link/track here",
+            "attachments": []
+        }),
+        config: json!({
+            "block_suspicious_links": true,
+            "delete_messages": true
+        }),
+    };
+    let actions2 = engine
+        .execute_event("automod", "message_create", event2)
+        .await
+        .expect("automod event should execute");
+    assert!(
+        matches!(actions2.first(), Some(LuaAction::DeleteMessage { .. })),
+        "expected delete message for url with userinfo"
+    );
+}
+
+#[tokio::test]
 async fn join_guard_detects_raid_burst_and_triggers_lockdown() {
     let event = LuaEventContext {
         name: "guild_member_add".to_owned(),
@@ -389,4 +453,107 @@ async fn progression_event_awards_xp_and_passes_role_rewards() {
         },
         other => panic!("expected Progression action, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn welcome_module_greets_new_member_assigns_auto_roles_and_sends_dm() {
+    let event = LuaEventContext {
+        name: "guild_member_add".to_owned(),
+        guild_id: Some("100000000000000001".to_owned()),
+        channel_id: None,
+        actor_id: Some("100000000000000003".to_owned()),
+        data: json!({
+            "user": {
+                "id": "100000000000000003",
+                "name": "tester",
+                "global_name": "Tester",
+                "bot": false
+            },
+            "guild_name": "Rust Polska",
+            "member_count": 250,
+            "roles": [],
+            "joined_at": null
+        }),
+        config: json!({
+            "channel_id": "100000000000000002",
+            "message": "Witaj {user} na serwerze {server}! Jesteś naszym {member_count}. członkiem.",
+            "dm_welcome": true,
+            "dm_message": "Cześć {username}! Witamy na serwerze {server}.",
+            "auto_roles": ["100000000000000007"]
+        }),
+    };
+
+    let actions = engine()
+        .execute_event("welcome", "guild_member_add", event)
+        .await
+        .expect("welcome event should execute");
+
+    assert_eq!(actions.len(), 4);
+
+    assert!(matches!(
+        &actions[0],
+        LuaAction::SendMessage { channel_id: Some(cid), content }
+            if cid == "100000000000000002" && content.contains("Witaj <@100000000000000003> na serwerze Rust Polska! Jesteś naszym 250. członkiem.")
+    ));
+
+    assert!(matches!(
+        &actions[1],
+        LuaAction::Audit { event, .. } if event == "welcome_sent"
+    ));
+
+    assert!(matches!(
+        &actions[2],
+        LuaAction::SendDirectMessage { user_id, content }
+            if user_id == "100000000000000003" && content.contains("Cześć Tester! Witamy na serwerze Rust Polska.")
+    ));
+
+    assert!(matches!(
+        &actions[3],
+        LuaAction::AddRole { user_id, role_id, .. }
+            if user_id == "100000000000000003" && role_id == "100000000000000007"
+    ));
+}
+
+#[tokio::test]
+async fn welcome_module_sends_goodbye_message_on_member_remove() {
+    let event = LuaEventContext {
+        name: "guild_member_remove".to_owned(),
+        guild_id: Some("100000000000000001".to_owned()),
+        channel_id: None,
+        actor_id: Some("100000000000000003".to_owned()),
+        data: json!({
+            "user": {
+                "id": "100000000000000003",
+                "name": "tester",
+                "global_name": "Tester",
+                "bot": false
+            },
+            "guild_name": "Rust Polska",
+            "member_count": 249,
+            "roles": []
+        }),
+        config: json!({
+            "send_goodbye": true,
+            "goodbye_channel_id": "100000000000000009",
+            "goodbye_message": "Żegnaj {username} z serwera {server}! Zostało nas {member_count}."
+        }),
+    };
+
+    let actions = engine()
+        .execute_event("welcome", "guild_member_remove", event)
+        .await
+        .expect("welcome goodbye event should execute");
+
+    assert_eq!(actions.len(), 2);
+
+    assert!(matches!(
+        &actions[0],
+        LuaAction::SendMessage { channel_id: Some(cid), content }
+            if cid == "100000000000000009" && content == "Żegnaj Tester z serwera Rust Polska! Zostało nas 249."
+    ));
+
+    assert!(matches!(
+        &actions[1],
+        LuaAction::Audit { event, .. } if event == "goodbye_sent"
+    ));
 }

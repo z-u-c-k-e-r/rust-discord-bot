@@ -16,6 +16,8 @@ pub enum ModerationCaseOperation {
         visible_to_subject: bool,
         #[serde(default)]
         duration_seconds: Option<u64>,
+        #[serde(default)]
+        delete_days: Option<u8>,
     },
     View {
         case_number: i64,
@@ -81,6 +83,7 @@ impl ModerationCaseOperation {
                 severity,
                 points,
                 duration_seconds,
+                delete_days,
                 ..
             } => {
                 validate_snowflake(subject_user_id)?;
@@ -94,6 +97,11 @@ impl ModerationCaseOperation {
                     && (*duration == 0 || *duration > 3653 * 24 * 3600)
                 {
                     return Err("case duration exceeds allowed limit".to_owned());
+                }
+                if let Some(days) = delete_days
+                    && *days > 7
+                {
+                    return Err("delete_days must be between 0 and 7".to_owned());
                 }
                 Ok(())
             }

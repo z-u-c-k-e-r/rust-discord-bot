@@ -17,11 +17,6 @@ CREATE INDEX IF NOT EXISTS tickets_guild_status_created_idx
 CREATE INDEX IF NOT EXISTS tickets_guild_creator_idx
     ON tickets (guild_id, creator_user_id);
 
--- Scheduled jobs: wyszukiwanie zadan gotowych do uruchomienia
-CREATE INDEX IF NOT EXISTS scheduled_jobs_due_idx
-    ON scheduled_jobs (status, next_run_at)
-    WHERE status = 'active';
-
 -- Czesciowe indeksy dla rankingu aktywnosci uzytkownikow (omijaja profile z 0 XP / coins)
 CREATE INDEX IF NOT EXISTS member_progress_xp_active_idx
     ON member_progress (guild_id, xp DESC, user_id)

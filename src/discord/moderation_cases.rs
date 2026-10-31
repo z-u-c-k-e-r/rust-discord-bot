@@ -77,6 +77,7 @@ pub async fn execute(
             points,
             visible_to_subject,
             duration_seconds,
+            delete_days,
         } => {
             if !is_mod {
                 return Err(anyhow!("brak uprawnień moderatorskich do tworzenia spraw"));
@@ -183,21 +184,60 @@ pub async fn execute(
                     .await
                     .map_err(|e| anyhow!("błąd Discord API podczas wyrzucania członka: {e}"))?;
             } else if case_kind == CaseKind::Ban {
+                let ban_delete_days = delete_days.unwrap_or(0);
                 guild_id
-                    .ban_with_reason(&ctx.http, target_user_id, 0, reason)
+                    .ban_with_reason(&ctx.http, target_user_id, ban_delete_days, reason)
                     .await
                     .map_err(|e| anyhow!("błąd Discord API podczas banowania: {e}"))?;
             } else if case_kind == CaseKind::Softban {
+                let softban_delete_days = delete_days.unwrap_or(1);
                 guild_id
-                    .ban_with_reason(&ctx.http, target_user_id, 1, reason)
+                    .ban_with_reason(&ctx.http, target_user_id, softban_delete_days, reason)
                     .await
                     .map_err(|e| anyhow!("błąd Discord API podczas banowania (softban): {e}"))?;
-                guild_id
-                    .unban(&ctx.http, target_user_id)
-                    .await
-                    .map_err(|e| {
-                        anyhow!("błąd Discord API podczas odbanowywania (softban): {e}")
-                    })?;
+
+                if let Err(unban_err) = guild_id.unban(&ctx.http, target_user_id).await {
+                    let _ = state
+                        .storage
+                        .record_audit(
+                            Some(&guild_id.get().to_string()),
+                            Some(&actor_id.get().to_string()),
+                            module_id,
+                            "softban_unban_failed",
+                            serde_json::json!({
+                                "subject_user_id": subject_user_id,
+                                "delete_days": softban_delete_days,
+                                "error": unban_err.to_string(),
+                                "alert": "Użytkownik został zbanowany, ale odbanowanie nie powiodło się; wymagana ręczna interwencja zespołu.",
+                            }),
+                        )
+                        .await;
+
+                    let _ = state
+                        .moderation_cases
+                        .create_case(
+                            CreateCase {
+                                guild_id: guild_id.get(),
+                                subject_user_id: subject_u64,
+                                actor_user_id: actor_id.get(),
+                                kind: CaseKind::Softban,
+                                severity: CaseSeverity::High,
+                                points: *points,
+                                reason: format!(
+                                    "{reason} [UWAGA: odbanowanie nie powiodło się: {unban_err}]"
+                                ),
+                                source_module: module_id.to_owned(),
+                                visible_to_subject: *visible_to_subject,
+                                expires_at,
+                            },
+                            now,
+                        )
+                        .await;
+
+                    return Err(anyhow!(
+                        "błąd Discord API podczas odbanowywania (softban): {unban_err}"
+                    ));
+                }
             } else if case_kind == CaseKind::Unban {
                 guild_id
                     .unban(&ctx.http, target_user_id)
@@ -239,6 +279,7 @@ pub async fn execute(
                         "severity": severity,
                         "points": points,
                         "reason": reason,
+                        "delete_days": delete_days,
                     }),
                 )
                 .await;

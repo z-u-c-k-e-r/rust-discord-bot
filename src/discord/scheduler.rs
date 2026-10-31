@@ -1,9 +1,10 @@
 use anyhow::{Context as _, Result, anyhow};
 use serenity::{
-    all::{Channel, ChannelId, GuildId, Permissions, UserId},
+    all::{ChannelId, GuildId, Permissions, UserId},
     client::Context,
 };
 
+use super::executor::{ActionOrigin, ChannelPurpose, resolve_and_validate_channel};
 use crate::{
     AppState,
     lua::{SchedulerOperation, SchedulerScope},
@@ -263,17 +264,16 @@ async fn ensure_channel_belongs_to_guild(
     channel_id: ChannelId,
     expected_guild_id: GuildId,
 ) -> Result<()> {
-    let channel = channel_id
-        .to_channel(ctx)
-        .await
-        .with_context(|| format!("nie można odczytać kanału {channel_id}"))?;
-    match channel {
-        Channel::Guild(channel) if channel.guild_id == expected_guild_id => Ok(()),
-        Channel::Guild(_) => Err(anyhow!(
-            "kanał docelowy musi należeć do serwera, na którym wywołano komendę"
-        )),
-        _ => Err(anyhow!("kanał prywatny nie może być celem harmonogramu")),
-    }
+    let origin = ActionOrigin {
+        guild_id: Some(expected_guild_id),
+        channel_id: Some(channel_id),
+        actor_id: None,
+        actor_permissions: Permissions::empty(),
+        app_permissions: Permissions::all(),
+        enforce_actor_permissions: false,
+    };
+    resolve_and_validate_channel(ctx, &origin, None, ChannelPurpose::SendMessage).await?;
+    Ok(())
 }
 
 fn format_job_list(jobs: &[ScheduledJob], include_owner: bool) -> String {
