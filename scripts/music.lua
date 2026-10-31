@@ -2,8 +2,8 @@ return {
     manifest = {
         id = "music",
         name = "Music",
-        version = "0.2.0",
-        description = "Odtwarzanie, kolejka i sterowanie głosem przez izolowane akcje Lua.",
+        version = "0.3.0",
+        description = "Odtwarzanie, kolejka, pętla i sterowanie głosem przez izolowane akcje Lua.",
         category = "voice",
         default_enabled = true,
         commands = {
@@ -26,6 +26,8 @@ return {
                             { name = "Stop", value = "stop" },
                             { name = "Queue", value = "queue" },
                             { name = "Leave", value = "leave" },
+                            { name = "Volume", value = "volume" },
+                            { name = "Loop", value = "loop" },
                         },
                     },
                     {
@@ -67,6 +69,15 @@ return {
                 {
                     type = "reply",
                     content = "Dla akcji play podaj tytuł albo dozwolony adres HTTPS.",
+                    ephemeral = true,
+                },
+            }
+        end
+        if operation == "volume" and (not ctx.options.query or ctx.options.query == "") then
+            return {
+                {
+                    type = "reply",
+                    content = "Dla akcji volume podaj poziom głośności w procentach (np. 50, 100, 150).",
                     ephemeral = true,
                 },
             }

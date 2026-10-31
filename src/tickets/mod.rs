@@ -35,6 +35,11 @@ impl TicketStore {
         Self::Memory(MemoryTicketStore::default())
     }
 
+    #[must_use]
+    pub fn postgres(pool: sqlx::PgPool) -> Self {
+        Self::Postgres(PostgresTicketStore::new(pool))
+    }
+
     pub async fn reserve_ticket(
         &self,
         reservation: NewTicketReservation,

@@ -8,6 +8,8 @@ use url::Url;
 
 use crate::{AppState, lua::MusicOperation};
 
+pub const MAX_QUEUE_SIZE: usize = 100;
+
 pub async fn execute(
     ctx: &Context,
     state: &AppState,
@@ -49,6 +51,12 @@ pub async fn execute(
                 .trim();
             validate_source(state, query)?;
 
+            if handler.queue().len() >= MAX_QUEUE_SIZE {
+                return Err(anyhow!(
+                    "kolejka odtwarzania osiągnęła maksymalny limit {MAX_QUEUE_SIZE} utworów"
+                ));
+            }
+
             let source = if query.starts_with("https://") {
                 YoutubeDl::new(state.media_http_client.clone(), query.to_owned())
             } else {
@@ -59,6 +67,41 @@ pub async fn execute(
                 "Dodano do kolejki. Liczba utworów: {}.",
                 handler.queue().len()
             ))
+        }
+        MusicOperation::Volume => {
+            let level = query
+                .and_then(|q| q.trim().parse::<f32>().ok())
+                .filter(|&v| (0.0..=150.0).contains(&v))
+                .ok_or_else(|| {
+                    anyhow!("poziom głośności musi być liczbą w zakresie od 0 do 150")
+                })?;
+            let factor = level / 100.0;
+            if let Some(track) = handler.queue().current() {
+                let _ = track.set_volume(factor);
+            }
+            Ok(format!("Ustawiono głośność odtwarzacza na {level:.0}%."))
+        }
+        MusicOperation::Loop => {
+            if let Some(track) = handler.queue().current() {
+                let info = track.get_info().await?;
+                let enabled = match info.loops {
+                    songbird::tracks::LoopState::Infinite => {
+                        track.disable_loop()?;
+                        false
+                    }
+                    _ => {
+                        track.enable_loop()?;
+                        true
+                    }
+                };
+                Ok(if enabled {
+                    "Włączono zapętlanie bieżącego utworu.".to_owned()
+                } else {
+                    "Wyłączono zapętlanie bieżącego utworu.".to_owned()
+                })
+            } else {
+                Err(anyhow!("brak aktywnego utworu do zapętlenia"))
+            }
         }
         MusicOperation::Pause => {
             handler.queue().pause()?;
@@ -148,10 +191,14 @@ pub fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
             false
         }
         std::net::IpAddr::V6(ipv6) => {
-            if ipv6.is_loopback() {
+            if ipv6.is_loopback() || ipv6.is_unspecified() || ipv6.is_multicast() {
                 return true;
             }
             let segments = ipv6.segments();
+            // 2001:db8::/32 (Documentation)
+            if segments[0] == 0x2001 && segments[1] == 0x0db8 {
+                return true;
+            }
             // fc00::/7 (Unique Local Address)
             if (segments[0] & 0xfe00) == 0xfc00 {
                 return true;
@@ -170,7 +217,21 @@ pub fn is_blocked_ip(ip: std::net::IpAddr) -> bool {
 }
 
 pub fn validate_source(state: &AppState, query: &str) -> Result<()> {
+    if query.chars().any(char::is_control) {
+        return Err(anyhow!("zapytanie zawiera niedozwolone znaki kontrolne"));
+    }
+    if query.trim_start().starts_with('-') {
+        return Err(anyhow!("zapytanie nie może zaczynać się od myślnika"));
+    }
+
     if !query.contains("://") {
+        if query.contains(':')
+            && !query.starts_with("https://")
+            && let Ok(parsed) = Url::parse(query)
+            && parsed.scheme() != "https"
+        {
+            return Err(anyhow!("adres źródła muzyki musi używać HTTPS"));
+        }
         return Ok(());
     }
 
@@ -229,9 +290,11 @@ mod tests {
         assert!(is_blocked_ip(IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254))));
         assert!(is_blocked_ip(IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
 
-        // IPv6 Unique Local and Link-Local
+        // IPv6 Unique Local, Link-Local, Unspecified and Documentation
+        assert!(is_blocked_ip(IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
         assert!(is_blocked_ip(IpAddr::V6("fc00::1".parse().unwrap())));
         assert!(is_blocked_ip(IpAddr::V6("fe80::1".parse().unwrap())));
+        assert!(is_blocked_ip(IpAddr::V6("2001:db8::1".parse().unwrap())));
 
         // Public internet IPs (must NOT be blocked)
         assert!(!is_blocked_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));

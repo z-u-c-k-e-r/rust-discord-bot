@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>ZuckerBot Control</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/assets/styles.css">
   <script src="/assets/app.js" defer></script>
 </head>
 <body>
+  <a href="#main-content" class="skip-link">Przejdź do treści</a>
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="/" aria-label="ZuckerBot Control">
@@ -19,13 +21,13 @@
         </span>
       </a>
 
-      <nav class="nav" aria-label="Nawigacja">
-        <a class="nav-item active" href="#modules" id="nav-modules">Moduły</a>
-        <a class="nav-item" href="#moderation" id="nav-moderation">Moderacja</a>
-        <a class="nav-item" href="#audit" id="nav-audit">Dziennik audytu</a>
+      <nav class="nav" aria-label="Nawigacja" role="tablist">
+        <a class="nav-item active" href="#modules" id="nav-modules" role="tab" aria-selected="true" aria-controls="view-modules">Moduły</a>
+        <a class="nav-item" href="#moderation" id="nav-moderation" role="tab" aria-selected="false" aria-controls="view-moderation">Moderacja</a>
+        <a class="nav-item" href="#audit" id="nav-audit" role="tab" aria-selected="false" aria-controls="view-audit">Dziennik audytu</a>
+        <a class="nav-item" href="#analytics" id="nav-analytics" role="tab" aria-selected="false" aria-controls="view-analytics">Analityka</a>
         <span class="nav-item disabled">Automatyzacje</span>
         <span class="nav-item disabled">Muzyka</span>
-        <span class="nav-item disabled">Analityka</span>
       </nav>
 
       <div class="sidebar-footer">
@@ -37,7 +39,7 @@
       </div>
     </aside>
 
-    <main class="content">
+    <main class="content" id="main-content">
       <header class="topbar">
         <div>
           <p class="eyebrow">Panel administracyjny</p>
@@ -86,11 +88,34 @@
           </div>
         </div>
 
-        <section id="view-modules" class="tab-pane">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <span class="kpi-label">Aktywne moduły</span>
+            <span class="kpi-value" id="kpi-active-modules">0 / 0</span>
+            <span class="kpi-hint" id="kpi-modules-hint">Gotowe do działania</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Sprawy moderacyjne</span>
+            <span class="kpi-value" id="kpi-total-cases">0</span>
+            <span class="kpi-hint">Zarejestrowane sankcje</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Zdarzenia audytu</span>
+            <span class="kpi-value" id="kpi-audit-events">0</span>
+            <span class="kpi-hint">Historia operacji</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Stan bota</span>
+            <span class="kpi-value" id="kpi-bot-status" style="color:var(--success);">ONLINE</span>
+            <span class="kpi-hint" id="kpi-uptime">Uptime: sprawdzanie...</span>
+          </div>
+        </div>
+
+        <section id="view-modules" class="tab-pane" role="tabpanel" aria-labelledby="nav-modules">
           <section id="modules" class="module-grid" aria-live="polite"></section>
         </section>
 
-        <section id="view-moderation" class="tab-pane hidden">
+        <section id="view-moderation" class="tab-pane hidden" role="tabpanel" aria-labelledby="nav-moderation">
           <div class="panel-header">
             <h2>Sprawy moderacyjne</h2>
             <p>Trwały rejestr sankcji, ostrzeżeń, notatek zespołu i dowodów z kontrolą wersji.</p>
@@ -98,16 +123,53 @@
           <div id="cases-list" class="cases-grid" aria-live="polite"></div>
         </section>
 
-        <section id="view-audit" class="tab-pane hidden">
+        <section id="view-audit" class="tab-pane hidden" role="tabpanel" aria-labelledby="nav-audit">
           <div class="panel-header">
             <h2>Dziennik zdarzeń audytowych</h2>
             <p>Chronologiczna historia operacji administracyjnych, zmian konfiguracji i egzekucji zasad.</p>
           </div>
           <div id="audit-list" class="audit-table-wrap" aria-live="polite"></div>
         </section>
+
+        <section id="view-analytics" class="tab-pane hidden" role="tabpanel" aria-labelledby="nav-analytics">
+          <div class="panel-header">
+            <h2>Kondycja systemu i analityka</h2>
+            <p>Metryki w czasie rzeczywistym, zdrowie podsystemów oraz obciążenie serwera.</p>
+          </div>
+          <div class="analytics-grid">
+            <div class="analytics-card">
+              <h3>Stan podsystemów (Ping & Gotowość)</h3>
+              <div id="analytics-health-donut" class="chart-container"></div>
+            </div>
+            <div class="analytics-card">
+              <h3>Aktywność zapytań panelu</h3>
+              <div id="analytics-requests-sparkline" class="chart-container"></div>
+            </div>
+          </div>
+          <div id="analytics-details" class="audit-table-wrap" style="margin-top:16px;"></div>
+        </section>
       </section>
     </main>
   </div>
+
+  <dialog id="void-dialog" class="modal-dialog">
+    <form method="dialog" id="void-form">
+      <h3>Unieważnienie sprawy moderacyjnej</h3>
+      <p style="color:var(--muted); font-size:13px; margin: 8px 0 16px 0;">
+        Unieważnienie sprawy anuluje sankcję i rejestruje trwały powód w historii audytowej.
+      </p>
+      <label class="field" style="display:flex; flex-direction:column; gap:6px;">
+        <span>Powód unieważnienia:</span>
+        <textarea id="void-reason-input" class="text-input" rows="3" required placeholder="Wyjaśnij powód unieważnienia (np. pomyłka, odwołanie uznane)..."></textarea>
+      </label>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+        <button type="button" class="case-action-btn" id="void-cancel-btn">Anuluj</button>
+        <button type="submit" class="case-action-btn btn-danger">Potwierdź unieważnienie</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <template id="module-template">
     <article class="module-card">
@@ -127,13 +189,22 @@
         <span class="module-id"></span>
         <span class="module-version"></span>
       </div>
-      <details>
-        <summary>Konfiguracja JSON</summary>
+
+      <div class="mode-toggle">
+        <button type="button" class="mode-btn active" data-mode="form">Formularz wizualny</button>
+        <button type="button" class="mode-btn" data-mode="json">Edytor JSON</button>
+      </div>
+
+      <div class="module-form-container"></div>
+
+      <details class="json-details hidden">
+        <summary>Surowy JSON konfiguracji</summary>
         <label class="json-label">
-          <span class="sr-only">Konfiguracja modułu</span>
+          <span class="sr-only">Konfiguracja modułu JSON</span>
           <textarea class="module-config" spellcheck="false"></textarea>
         </label>
       </details>
+
       <div class="module-footer">
         <span class="module-state"></span>
         <button class="save-button" type="button">Zapisz zmiany</button>

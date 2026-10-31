@@ -33,6 +33,11 @@ impl SessionStore {
         Self::Memory(MemorySessionStore::default())
     }
 
+    #[must_use]
+    pub fn postgres(pool: sqlx::PgPool) -> Self {
+        Self::Postgres(PostgresSessionStore::new(pool))
+    }
+
     pub async fn save_session(
         &self,
         session_id: &str,

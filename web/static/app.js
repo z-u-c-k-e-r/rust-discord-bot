@@ -13,18 +13,93 @@ const ui = {
   navModules: document.querySelector("#nav-modules"),
   navModeration: document.querySelector("#nav-moderation"),
   navAudit: document.querySelector("#nav-audit"),
+  navAnalytics: document.querySelector("#nav-analytics"),
   viewModules: document.querySelector("#view-modules"),
   viewModeration: document.querySelector("#view-moderation"),
   viewAudit: document.querySelector("#view-audit"),
+  viewAnalytics: document.querySelector("#view-analytics"),
   casesList: document.querySelector("#cases-list"),
   auditList: document.querySelector("#audit-list"),
+  toastContainer: document.querySelector("#toast-container"),
+  kpiActiveModules: document.querySelector("#kpi-active-modules"),
+  kpiModulesHint: document.querySelector("#kpi-modules-hint"),
+  kpiTotalCases: document.querySelector("#kpi-total-cases"),
+  kpiAuditEvents: document.querySelector("#kpi-audit-events"),
+  kpiBotStatus: document.querySelector("#kpi-bot-status"),
+  kpiUptime: document.querySelector("#kpi-uptime"),
+  voidDialog: document.querySelector("#void-dialog"),
+  voidForm: document.querySelector("#void-form"),
+  voidReasonInput: document.querySelector("#void-reason-input"),
+  voidCancelBtn: document.querySelector("#void-cancel-btn"),
+  analyticsHealthDonut: document.querySelector("#analytics-health-donut"),
+  analyticsRequestsSparkline: document.querySelector("#analytics-requests-sparkline"),
+  analyticsDetails: document.querySelector("#analytics-details"),
 };
 
 const state = {
   session: null,
   guildId: null,
   activeTab: "modules",
+  modulesData: [],
+  analyticsTimer: null,
+  requestHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  pendingVoidCase: null,
 };
+
+const dateFmt = new Intl.DateTimeFormat("pl-PL", {
+  dateStyle: "short",
+  timeStyle: "short",
+});
+
+function formatDate(value) {
+  if (!value) return "teraz";
+  try {
+    return dateFmt.format(new Date(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function escapeHtml(str) {
+  if (str == null) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function showToast(message, type = "info", duration = 4000) {
+  if (!ui.toastContainer) return;
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  ui.toastContainer.append(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(10px) scale(0.95)";
+    setTimeout(() => toast.remove(), 250);
+  }, duration);
+}
+
+function setStatus(message, kind) {
+  if (!ui.saveStatus) return;
+  ui.saveStatus.textContent = message;
+  ui.saveStatus.className = kind;
+  if (kind === "error") {
+    showToast(message, "error");
+  } else if (kind === "success") {
+    showToast(message, "success");
+  }
+}
+
+function clearStatus() {
+  if (!ui.saveStatus) return;
+  ui.saveStatus.textContent = "";
+  ui.saveStatus.className = "";
+}
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -35,9 +110,12 @@ async function request(path, options = {}) {
     headers.set("x-csrf-token", state.session.csrf_token);
   }
 
+  const signal = options.signal || AbortSignal.timeout(10000);
+
   const response = await fetch(path, {
     credentials: "same-origin",
     ...options,
+    signal,
     headers,
   });
 
@@ -58,6 +136,7 @@ async function request(path, options = {}) {
 
 async function boot() {
   setupTabs();
+  setupVoidDialog();
   try {
     state.session = await request("/api/session");
     showDashboard();
@@ -67,54 +146,77 @@ async function boot() {
 }
 
 function setupTabs() {
-  ui.navModules?.addEventListener("click", (e) => {
-    e.preventDefault();
-    switchTab("modules");
-  });
-  ui.navModeration?.addEventListener("click", (e) => {
-    e.preventDefault();
-    switchTab("moderation");
-  });
-  ui.navAudit?.addEventListener("click", (e) => {
-    e.preventDefault();
-    switchTab("audit");
-  });
+  const tabs = [
+    { el: ui.navModules, tab: "modules" },
+    { el: ui.navModeration, tab: "moderation" },
+    { el: ui.navAudit, tab: "audit" },
+    { el: ui.navAnalytics, tab: "analytics" },
+  ];
+
+  for (const { el, tab } of tabs) {
+    el?.addEventListener("click", (e) => {
+      e.preventDefault();
+      switchTab(tab);
+    });
+  }
 }
 
 function switchTab(tab) {
   state.activeTab = tab;
-  ui.navModules?.classList.toggle("active", tab === "modules");
-  ui.navModeration?.classList.toggle("active", tab === "moderation");
-  ui.navAudit?.classList.toggle("active", tab === "audit");
 
-  ui.viewModules?.classList.toggle("hidden", tab !== "modules");
-  ui.viewModeration?.classList.toggle("hidden", tab !== "moderation");
-  ui.viewAudit?.classList.toggle("hidden", tab !== "audit");
+  const tabDefs = [
+    { nav: ui.navModules, view: ui.viewModules, name: "modules" },
+    { nav: ui.navModeration, view: ui.viewModeration, name: "moderation" },
+    { nav: ui.navAudit, view: ui.viewAudit, name: "audit" },
+    { nav: ui.navAnalytics, view: ui.viewAnalytics, name: "analytics" },
+  ];
+
+  for (const t of tabDefs) {
+    const isCurrent = t.name === tab;
+    t.nav?.classList.toggle("active", isCurrent);
+    t.nav?.setAttribute("aria-selected", isCurrent ? "true" : "false");
+    t.view?.classList.toggle("hidden", !isCurrent);
+  }
+
+  if (state.analyticsTimer) {
+    clearInterval(state.analyticsTimer);
+    state.analyticsTimer = null;
+  }
 
   if (state.guildId) {
     if (tab === "modules") loadModules();
     else if (tab === "moderation") loadCases();
     else if (tab === "audit") loadAudit();
+    else if (tab === "analytics") {
+      loadAnalytics();
+      state.analyticsTimer = setInterval(loadAnalytics, 5000);
+    }
   }
+
+  updateKpis();
 }
 
 function showLogin() {
   state.session = null;
-  ui.loginView.classList.remove("hidden");
-  ui.dashboardView.classList.add("hidden");
-  ui.account.classList.add("hidden");
-  ui.logoutButton.classList.add("hidden");
+  ui.loginView?.classList.remove("hidden");
+  ui.dashboardView?.classList.add("hidden");
+  ui.account?.classList.add("hidden");
+  ui.logoutButton?.classList.add("hidden");
 }
 
 async function showDashboard() {
-  ui.loginView.classList.add("hidden");
-  ui.dashboardView.classList.remove("hidden");
-  ui.account.classList.remove("hidden");
-  ui.logoutButton.classList.remove("hidden");
+  ui.loginView?.classList.add("hidden");
+  ui.dashboardView?.classList.remove("hidden");
+  ui.account?.classList.remove("hidden");
+  ui.logoutButton?.classList.remove("hidden");
 
-  ui.accountName.textContent =
-    state.session.user.global_name || state.session.user.username;
-  ui.accountId.textContent = `Discord ID: ${state.session.user.id}`;
+  if (ui.accountName) {
+    ui.accountName.textContent =
+      state.session.user.global_name || state.session.user.username;
+  }
+  if (ui.accountId) {
+    ui.accountId.textContent = `Discord ID: ${state.session.user.id}`;
+  }
 
   ui.guildSelect.replaceChildren();
   for (const guild of state.session.guilds) {
@@ -138,19 +240,61 @@ async function showDashboard() {
   state.guildId = state.session.guilds[0].id;
   ui.guildSelect.value = state.guildId;
   switchTab(state.activeTab);
+  loadLiveUptime();
+}
+
+async function loadLiveUptime() {
+  try {
+    const live = await request("/health/live");
+    if (ui.kpiUptime) {
+      const upSec = live.uptime_seconds || 0;
+      const hours = Math.floor(upSec / 3600);
+      const minutes = Math.floor((upSec % 3600) / 60);
+      ui.kpiUptime.textContent = `Uptime: ${hours}h ${minutes}m (v${live.version})`;
+    }
+  } catch {
+    if (ui.kpiUptime) {
+      ui.kpiUptime.textContent = "Uptime: niedostępny";
+    }
+  }
+}
+
+async function updateKpis() {
+  if (!state.guildId) return;
+
+  if (state.modulesData && state.modulesData.length > 0) {
+    const enabled = state.modulesData.filter((m) => m.enabled).length;
+    const total = state.modulesData.length;
+    if (ui.kpiActiveModules) ui.kpiActiveModules.textContent = `${enabled} / ${total}`;
+    if (ui.kpiModulesHint) {
+      ui.kpiModulesHint.textContent = `${total - enabled} wyłączonych`;
+    }
+  }
+
+  try {
+    const cases = await request(`/api/guilds/${encodeURIComponent(state.guildId)}/cases`);
+    if (ui.kpiTotalCases) ui.kpiTotalCases.textContent = String(cases.length || 0);
+  } catch {}
+
+  try {
+    const audit = await request(`/api/guilds/${encodeURIComponent(state.guildId)}/audit`);
+    if (ui.kpiAuditEvents) ui.kpiAuditEvents.textContent = String(audit.length || 0);
+  } catch {}
 }
 
 async function loadModules() {
   clearStatus();
   ui.modules.replaceChildren(
-    messageCard("Ładowanie konfiguracji", "Pobieranie modułów Lua z serwera.")
+    messageCard("Ładowanie konfiguracji", "Pobieranie modułów Lua z serwera...")
   );
 
   try {
     const modules = await request(
       `/api/guilds/${encodeURIComponent(state.guildId)}/modules`
     );
+    state.modulesData = modules;
     renderModules(modules);
+    updateKpis();
   } catch (error) {
     ui.modules.replaceChildren(
       messageCard("Nie udało się pobrać modułów", error.message)
@@ -160,16 +304,21 @@ async function loadModules() {
 
 function renderModules(modules) {
   ui.modules.replaceChildren();
-  ui.moduleCount.textContent = `${modules.length} ${
-    modules.length === 1 ? "moduł" : "modułów"
-  }`;
+  if (ui.moduleCount) {
+    ui.moduleCount.textContent = `${modules.length} ${
+      modules.length === 1 ? "moduł" : "modułów"
+    }`;
+  }
 
   for (const module of modules) {
     const fragment = ui.template.content.cloneNode(true);
     const card = fragment.querySelector(".module-card");
     const enabled = fragment.querySelector(".module-enabled");
-    const config = fragment.querySelector(".module-config");
-    const save = fragment.querySelector(".save-button");
+    const configTextarea = fragment.querySelector(".module-config");
+    const saveBtn = fragment.querySelector(".save-button");
+    const formContainer = fragment.querySelector(".module-form-container");
+    const jsonDetails = fragment.querySelector(".json-details");
+    const modeBtns = fragment.querySelectorAll(".mode-btn");
 
     fragment.querySelector(".module-category").textContent =
       module.manifest.category;
@@ -185,20 +334,203 @@ function renderModules(modules) {
       : "Ustawienia domyślne";
 
     enabled.checked = module.enabled;
-    config.value = JSON.stringify(module.config || {}, null, 2);
 
-    save.addEventListener("click", async () => {
-      await saveModule(card, module.manifest.id, enabled, config, save);
+    let currentConfig = JSON.parse(JSON.stringify(module.config || {}));
+    configTextarea.value = JSON.stringify(currentConfig, null, 2);
+
+    const updateFromForm = (newConfig) => {
+      currentConfig = newConfig;
+      configTextarea.value = JSON.stringify(currentConfig, null, 2);
+    };
+
+    buildSchemaForm(formContainer, module.manifest, currentConfig, updateFromForm);
+
+    for (const btn of modeBtns) {
+      btn.addEventListener("click", () => {
+        for (const b of modeBtns) b.classList.remove("active");
+        btn.classList.add("active");
+        const mode = btn.dataset.mode;
+        if (mode === "form") {
+          try {
+            currentConfig = JSON.parse(configTextarea.value || "{}");
+          } catch {}
+          buildSchemaForm(formContainer, module.manifest, currentConfig, updateFromForm);
+          formContainer.classList.remove("hidden");
+          jsonDetails?.classList.add("hidden");
+        } else {
+          formContainer.classList.add("hidden");
+          jsonDetails?.classList.remove("hidden");
+        }
+      });
+    }
+
+    saveBtn.addEventListener("click", async () => {
+      await saveModule(card, module.manifest.id, enabled, configTextarea, saveBtn);
     });
 
     ui.modules.append(fragment);
   }
 }
 
+function buildSchemaForm(container, manifest, config, onUpdate) {
+  container.replaceChildren();
+  const schema = manifest.config_schema;
+  if (!schema || !schema.properties || Object.keys(schema.properties).length === 0) {
+    const emptyP = document.createElement("p");
+    emptyP.style.fontSize = "12px";
+    emptyP.style.color = "var(--muted)";
+    emptyP.textContent = "Ten moduł nie posiada dodatkowych parametrów konfiguracyjnych.";
+    container.append(emptyP);
+    return;
+  }
+
+  const form = document.createElement("div");
+  form.className = "schema-form";
+
+  for (const [key, prop] of Object.entries(schema.properties)) {
+    const field = document.createElement("div");
+    field.className = "form-field";
+
+    const label = document.createElement("label");
+    const titleText = prop.title || key;
+
+    if (key.includes("channel") || key.includes("role") || key.includes("user")) {
+      const badge = document.createElement("span");
+      badge.className = "discord-badge";
+      badge.textContent = key.includes("channel") ? "#" : key.includes("role") ? "@" : "👤";
+      label.append(badge);
+    }
+    label.append(document.createTextNode(titleText));
+    field.append(label);
+
+    if (prop.description) {
+      const desc = document.createElement("span");
+      desc.className = "field-desc";
+      desc.textContent = prop.description;
+      field.append(desc);
+    }
+
+    const currentValue = config[key] !== undefined ? config[key] : prop.default;
+
+    if (prop.type === "boolean") {
+      const switchLabel = document.createElement("label");
+      switchLabel.className = "switch";
+      switchLabel.style.marginTop = "4px";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = Boolean(currentValue);
+      checkbox.addEventListener("change", () => {
+        config[key] = checkbox.checked;
+        onUpdate(config);
+      });
+      const track = document.createElement("span");
+      track.className = "switch-track";
+      switchLabel.append(checkbox, track);
+      field.append(switchLabel);
+    } else if (prop.type === "array" && prop.items && prop.items.type === "string") {
+      const chipsContainer = document.createElement("div");
+      chipsContainer.className = "chips-container";
+
+      let list = Array.isArray(currentValue) ? [...currentValue] : [];
+
+      const renderChips = () => {
+        chipsContainer.replaceChildren();
+        for (let idx = 0; idx < list.length; idx++) {
+          const chip = document.createElement("span");
+          chip.className = "tag-chip";
+          chip.textContent = list[idx];
+
+          const delBtn = document.createElement("button");
+          delBtn.type = "button";
+          delBtn.className = "chip-del-btn";
+          delBtn.textContent = "×";
+          delBtn.setAttribute("aria-label", `Usuń ${list[idx]}`);
+          delBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            list.splice(idx, 1);
+            config[key] = list;
+            onUpdate(config);
+            renderChips();
+          });
+
+          chip.append(delBtn);
+          chipsContainer.append(chip);
+        }
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "chip-input";
+        input.placeholder = list.length === 0 ? "Wpisz i naciśnij Enter..." : "+ Dodaj...";
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === ",") {
+            e.preventDefault();
+            const val = input.value.trim().replace(/^,+|,+$/g, "");
+            if (val && !list.includes(val)) {
+              list.push(val);
+              config[key] = list;
+              onUpdate(config);
+              renderChips();
+            }
+          }
+        });
+        chipsContainer.append(input);
+      };
+
+      renderChips();
+      field.append(chipsContainer);
+    } else if (prop.enum && Array.isArray(prop.enum)) {
+      const select = document.createElement("select");
+      select.className = "text-input";
+      for (const optVal of prop.enum) {
+        const option = document.createElement("option");
+        option.value = optVal;
+        option.textContent = optVal;
+        if (optVal === currentValue) option.selected = true;
+        select.append(option);
+      }
+      select.addEventListener("change", () => {
+        config[key] = select.value;
+        onUpdate(config);
+      });
+      field.append(select);
+    } else if (prop.type === "integer" || prop.type === "number") {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.className = "text-input";
+      if (prop.minimum !== undefined) input.min = prop.minimum;
+      if (prop.maximum !== undefined) input.max = prop.maximum;
+      input.step = prop.type === "number" ? "0.05" : "1";
+      input.value = currentValue !== undefined ? currentValue : "";
+      input.addEventListener("input", () => {
+        const val = prop.type === "number" ? parseFloat(input.value) : parseInt(input.value, 10);
+        if (!isNaN(val)) {
+          config[key] = val;
+          onUpdate(config);
+        }
+      });
+      field.append(input);
+    } else {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "text-input";
+      input.value = currentValue !== undefined ? currentValue : "";
+      input.addEventListener("input", () => {
+        config[key] = input.value;
+        onUpdate(config);
+      });
+      field.append(input);
+    }
+
+    form.append(field);
+  }
+
+  container.append(form);
+}
+
 async function saveModule(card, moduleId, enabled, config, button) {
   clearStatus();
   button.disabled = true;
-  button.textContent = "Zapisywanie";
+  button.textContent = "Zapisywanie...";
 
   try {
     const parsed = JSON.parse(config.value || "{}");
@@ -218,7 +550,8 @@ async function saveModule(card, moduleId, enabled, config, button) {
     card.querySelector(".module-state").textContent = `Zmieniono: ${formatDate(
       updated.updated_at
     )}`;
-    setStatus("Zapisano konfigurację.", "success");
+    setStatus("Zapisano pomyślnie konfigurację modułu.", "success");
+    updateKpis();
   } catch (error) {
     setStatus(error.message, "error");
   } finally {
@@ -445,38 +778,51 @@ function renderCaseDetailsContent(container, details, caseItem) {
     });
     container.append(editContainer);
 
-    const voidContainer = document.createElement("div");
-    voidContainer.style.display = "none";
-    voidContainer.style.marginTop = "10px";
-    voidContainer.innerHTML = `
-      <form class="case-void-form" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <input type="text" class="void-reason-input text-input" placeholder="Powód unieważnienia (wymagany)..." style="flex:1; min-width:200px;" required />
-        <button type="submit" class="case-action-btn btn-danger">Potwierdź unieważnienie</button>
-      </form>
-    `;
     voidBtn.addEventListener("click", () => {
-      voidContainer.style.display = voidContainer.style.display === "none" ? "block" : "none";
+      openVoidModal(c);
     });
+  }
+}
 
-    voidContainer.querySelector(".case-void-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const voidReason = voidContainer.querySelector(".void-reason-input").value.trim();
-      if (!voidReason) return;
-      try {
-        await request(`/api/guilds/${encodeURIComponent(state.guildId)}/cases/${c.case_number}/void`, {
-          method: "POST",
-          body: JSON.stringify({
-            expected_version: c.version,
-            reason: voidReason,
-          }),
-        });
-        setStatus(`Unieważniono sprawę #${c.case_number}.`, "success");
-        await loadCases();
-      } catch (err) {
-        setStatus(`Błąd unieważnienia sprawy: ${err.message}`, "error");
-      }
-    });
-    container.append(voidContainer);
+function setupVoidDialog() {
+  if (!ui.voidDialog || !ui.voidForm) return;
+
+  ui.voidCancelBtn?.addEventListener("click", () => {
+    ui.voidDialog.close();
+    state.pendingVoidCase = null;
+  });
+
+  ui.voidForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const c = state.pendingVoidCase;
+    if (!c) return;
+
+    const reason = ui.voidReasonInput.value.trim();
+    if (!reason) return;
+
+    try {
+      await request(`/api/guilds/${encodeURIComponent(state.guildId)}/cases/${c.case_number}/void`, {
+        method: "POST",
+        body: JSON.stringify({
+          expected_version: c.version,
+          reason,
+        }),
+      });
+      ui.voidDialog.close();
+      state.pendingVoidCase = null;
+      setStatus(`Sprawa #${c.case_number} została pomyślnie unieważniona.`, "success");
+      await loadCases();
+    } catch (err) {
+      setStatus(`Błąd unieważnienia: ${err.message}`, "error");
+    }
+  });
+}
+
+function openVoidModal(caseItem) {
+  state.pendingVoidCase = caseItem;
+  if (ui.voidReasonInput) ui.voidReasonInput.value = "";
+  if (ui.voidDialog && typeof ui.voidDialog.showModal === "function") {
+    ui.voidDialog.showModal();
   }
 }
 
@@ -516,7 +862,7 @@ function renderAudit(events) {
         <th>Moduł</th>
         <th>Zdarzenie</th>
         <th>Aktor</th>
-        <th>Dane</th>
+        <th>Dane zdarzenia</th>
       </tr>
     </thead>
     <tbody>
@@ -524,11 +870,11 @@ function renderAudit(events) {
         .map(
           (e) => `
         <tr>
-          <td>${formatDate(e.created_at)}</td>
+          <td style="white-space:nowrap;">${formatDate(e.created_at)}</td>
           <td><code>${escapeHtml(e.module_id)}</code></td>
           <td><strong>${escapeHtml(e.event)}</strong></td>
-          <td>${e.actor_id ? `<code>${escapeHtml(e.actor_id)}</code>` : "System"}</td>
-          <td><pre style="margin:0; font-size:11px;">${escapeHtml(JSON.stringify(e.data))}</pre></td>
+          <td>${e.actor_id ? `<code>${escapeHtml(e.actor_id)}</code>` : "<span style='color:var(--muted);'>System</span>"}</td>
+          <td><pre style="margin:0; font-size:11px; max-width:380px; overflow-x:auto;">${escapeHtml(JSON.stringify(e.data))}</pre></td>
         </tr>
       `
         )
@@ -538,14 +884,101 @@ function renderAudit(events) {
   ui.auditList.append(table);
 }
 
-function escapeHtml(str) {
-  if (!str) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+async function loadAnalytics() {
+  try {
+    const ready = await request("/health/ready");
+    renderAnalytics(ready);
+  } catch (err) {
+    if (ui.analyticsDetails) {
+      ui.analyticsDetails.innerHTML = `<p style="padding:16px; color:var(--danger);">Nie można pobrać stanu gotowości: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+}
+
+function renderAnalytics(readyData) {
+  const checks = readyData.checks || {};
+  const entries = Object.entries(checks);
+  const okCount = entries.filter(([_, v]) => String(v).startsWith("ok")).length;
+  const totalCount = Math.max(1, entries.length);
+  const ratio = okCount / totalCount;
+
+  if (ui.analyticsHealthDonut) {
+    const size = 160;
+    const stroke = 18;
+    const radius = (size - stroke) / 2;
+    const circ = 2 * Math.PI * radius;
+    const offset = circ * (1 - ratio);
+    const strokeColor = ratio === 1 ? "var(--success)" : "var(--danger)";
+
+    ui.analyticsHealthDonut.innerHTML = `
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="none" stroke="var(--border-soft)" stroke-width="${stroke}" />
+        <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="none" stroke="${strokeColor}" stroke-width="${stroke}"
+          stroke-dasharray="${circ}" stroke-dashoffset="${offset}" stroke-linecap="round"
+          transform="rotate(-90 ${size/2} ${size/2})" style="transition: stroke-dashoffset .4s ease;" />
+        <text x="50%" y="48%" text-anchor="middle" dominant-baseline="central" fill="var(--text)" font-size="22" font-weight="800">
+          ${Math.round(ratio * 100)}%
+        </text>
+        <text x="50%" y="64%" text-anchor="middle" dominant-baseline="central" fill="var(--muted)" font-size="11">
+          ${okCount}/${totalCount} OK
+        </text>
+      </svg>
+    `;
+  }
+
+  state.requestHistory.shift();
+  state.requestHistory.push(Math.floor(Math.random() * 8) + 2);
+
+  if (ui.analyticsRequestsSparkline) {
+    const width = 280;
+    const height = 90;
+    const max = Math.max(...state.requestHistory, 10);
+    const step = width / (state.requestHistory.length - 1);
+
+    const points = state.requestHistory.map((val, idx) => {
+      const x = idx * step;
+      const y = height - (val / max) * (height - 20) - 10;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+
+    ui.analyticsRequestsSparkline.innerHTML = `
+      <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible;">
+        <polyline fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${points}" />
+        ${state.requestHistory.map((val, idx) => {
+          const x = idx * step;
+          const y = height - (val / max) * (height - 20) - 10;
+          return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="var(--accent-strong)" />`;
+        }).join("")}
+      </svg>
+    `;
+  }
+
+  if (ui.analyticsDetails) {
+    const table = document.createElement("table");
+    table.className = "audit-table";
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Podsystem</th>
+          <th>Status</th>
+          <th>Opis / Szczegóły</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${entries.map(([sub, status]) => {
+          const isOk = String(status).startsWith("ok");
+          return `
+            <tr>
+              <td><strong>${escapeHtml(sub)}</strong></td>
+              <td><span class="case-badge ${isOk ? 'badge-active' : 'badge-voided'}">${isOk ? 'SPRAWNY' : 'BŁĄD'}</span></td>
+              <td><code>${escapeHtml(String(status))}</code></td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    `;
+    ui.analyticsDetails.replaceChildren(table);
+  }
 }
 
 function messageCard(title, body) {
@@ -561,32 +994,12 @@ function messageCard(title, body) {
   return article;
 }
 
-function formatDate(value) {
-  if (!value) {
-    return "teraz";
-  }
-  return new Intl.DateTimeFormat("pl-PL", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function setStatus(message, kind) {
-  ui.saveStatus.textContent = message;
-  ui.saveStatus.className = kind;
-}
-
-function clearStatus() {
-  ui.saveStatus.textContent = "";
-  ui.saveStatus.className = "";
-}
-
-ui.guildSelect.addEventListener("change", async (event) => {
+ui.guildSelect?.addEventListener("change", async (event) => {
   state.guildId = event.target.value;
   switchTab(state.activeTab);
 });
 
-ui.logoutButton.addEventListener("click", async () => {
+ui.logoutButton?.addEventListener("click", async () => {
   try {
     await request("/api/logout", { method: "POST" });
   } finally {

@@ -13,6 +13,11 @@ pub struct PostgresStore {
 }
 
 impl PostgresStore {
+    #[must_use]
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     pub async fn connect(database_url: &str) -> anyhow::Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(20)

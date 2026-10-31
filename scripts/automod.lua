@@ -1,3 +1,8 @@
+local SUSPICIOUS_DOMAINS = {
+    "grabify.link", "iplogger.org", "2no.co", "yip.su", "blasze.com",
+    "shorturl.at", "bit.ly", "tinyurl.com", "cutt.ly", "is.gd"
+}
+
 local function lower(value)
     return string.lower(value or "")
 end
@@ -25,9 +30,42 @@ local function host_allowed(host, allowlist)
     return false
 end
 
+local function check_discord_invites(content)
+    local sanitized = string.gsub(content, "\\", "/")
+    sanitized = string.gsub(sanitized, "[\u{200B}\u{200C}\u{200D}\u{FEFF}]", "")
+
+    local invite_patterns = {
+        "discord%.gg/[%w%-_]+",
+        "discord%.com/invite/[%w%-_]+",
+        "discordapp%.com/invite/[%w%-_]+",
+        "dsc%.gg/[%w%-_]+",
+        "discord%.me/[%w%-_]+",
+        "discord%.io/[%w%-_]+",
+        "discord%.li/[%w%-_]+",
+        "discord%.link/[%w%-_]+",
+        "invite%.gg/[%w%-_]+",
+        "discord%.gift/[%w%-_]+",
+    }
+
+    for _, pattern in ipairs(invite_patterns) do
+        local match = string.match(sanitized, pattern)
+        if match then
+            return match
+        end
+    end
+
+    if string.match(sanitized, "discord%s*%.%s*gg") then
+        return "discord.gg"
+    end
+
+    return nil
+end
+
 local function matched_domain(content, config)
-    for host in string.gmatch(content, "https?://([%w%._%-]+)") do
-        host = lower(host)
+    local function evaluate_host(host)
+        host = string.gsub(lower(host), "[%.,:;!?]+$", "")
+        if host == "" then return nil, nil end
+
         if not host_allowed(host, config.allowed_domains) then
             if config.block_all_links == true then
                 return host, "all_links"
@@ -38,8 +76,27 @@ local function matched_domain(content, config)
                     return host, "blocked_domain"
                 end
             end
+            if config.block_suspicious_links ~= false then
+                for _, sus in ipairs(SUSPICIOUS_DOMAINS) do
+                    if host == sus or string.sub(host, -(#sus + 1)) == "." .. sus then
+                        return host, "suspicious_domain"
+                    end
+                end
+            end
         end
+        return nil, nil
     end
+
+    for host in string.gmatch(content, "https?://([%w%._%-]+)") do
+        local h, rule = evaluate_host(host)
+        if h then return h, rule end
+    end
+
+    for host in string.gmatch(content, "([%w%-_]+%.[a-z]{2,24})") do
+        local h, rule = evaluate_host(host)
+        if h then return h, rule end
+    end
+
     return nil, nil
 end
 
@@ -100,19 +157,45 @@ local function evaluate(ctx)
         end
     end
 
-    if config.block_invites == true
-        and (string.find(content, "discord.gg/", 1, true)
-            or string.find(content, "discord.com/invite/", 1, true)
-            or string.find(content, "discordapp.com/invite/", 1, true)) then
-        return "discord_invite", "invite"
+    if config.block_invites ~= false then
+        local invite = check_discord_invites(content)
+        if invite then
+            return "discord_invite", invite
+        end
     end
 
     local host, domain_rule = matched_domain(content, config)
     if host then return domain_rule, host end
 
+    if config.block_everyone_here ~= false then
+        if ctx.data.mention_everyone == true
+            or string.find(content, "@everyone", 1, true)
+            or string.find(content, "@here", 1, true) then
+            return "everyone_here_mention", "@everyone/@here"
+        end
+    end
+
+    local user_mention_counts = {}
+    local total_user_mention_tags = 0
+    for user_id in string.gmatch(original, "<@!?([%d]+)>") do
+        total_user_mention_tags = total_user_mention_tags + 1
+        user_mention_counts[user_id] = (user_mention_counts[user_id] or 0) + 1
+        local max_single = tonumber(config.max_single_user_mentions) or 4
+        if max_single > 0 and user_mention_counts[user_id] > max_single then
+            return "repeated_user_mentions", string.format("użytkownik %s oznaczony %d razy", user_id, user_mention_counts[user_id])
+        end
+    end
+
+    local role_mention_tags = 0
+    for _ in string.gmatch(original, "<@&[%d]+>") do
+        role_mention_tags = role_mention_tags + 1
+    end
+    local role_mentions_count = math.max(role_mention_tags, #(ctx.data.mention_roles or {}))
+
     local mention_limit = tonumber(config.max_mentions) or 0
-    if mention_limit > 0 and #(ctx.data.mentions or {}) > mention_limit then
-        return "mass_mentions", tostring(#(ctx.data.mentions or {}))
+    local total_mentions = math.max(total_user_mention_tags, #(ctx.data.mentions or {})) + role_mentions_count
+    if mention_limit > 0 and total_mentions > mention_limit then
+        return "mass_mentions", tostring(total_mentions)
     end
 
     local minimum_letters = tonumber(config.caps_min_letters) or 0
@@ -139,7 +222,7 @@ local function evaluate(ctx)
     return nil, nil
 end
 
-local function build_actions(ctx, rule, evidence)
+local function build_actions(ctx, rule, evidence, is_edit)
     local config = ctx.config or {}
     local actions = {}
 
@@ -163,11 +246,13 @@ local function build_actions(ctx, rule, evidence)
     end
 
     if config.alert_channel_id and config.alert_channel_id ~= "" then
+        local edit_badge = is_edit and " *(wykryto podczas edycji wiadomości)*" or ""
         table.insert(actions, {
             type = "send_message",
             channel_id = config.alert_channel_id,
             content = string.format(
-                "🛡️ **AutoMod zadziałał**\nUżytkownik: <@%s> (`%s`)\nKanał: <#%s>\nReguła: `%s`\nDowód: `%s`\nWiadomość: `%s`",
+                "🛡️ **AutoMod zadziałał**%s\nUżytkownik: <@%s> (`%s`)\nKanał: <#%s>\nReguła: `%s`\nDowód: `%s`\nWiadomość: `%s`",
+                edit_badge,
                 tostring(ctx.actor_id),
                 tostring(ctx.actor_id),
                 tostring(ctx.channel_id),
@@ -180,13 +265,14 @@ local function build_actions(ctx, rule, evidence)
 
     table.insert(actions, {
         type = "audit",
-        event = "automod_rule_match",
+        event = is_edit and "automod_edit_rule_match" or "automod_rule_match",
         data = {
             message_id = ctx.data.message_id,
             user_id = ctx.actor_id,
             channel_id = ctx.channel_id,
             rule = rule,
             evidence = tostring(evidence or ""),
+            is_edit = is_edit or false,
         },
     })
 
@@ -197,12 +283,13 @@ return {
     manifest = {
         id = "automod",
         name = "Advanced Lua AutoMod",
-        version = "1.0.0",
-        description = "Wielowarstwowy filtr treści, linków, zaproszeń, wzmianek, caps locka i załączników.",
+        version = "1.1.0",
+        description = "Wielowarstwowy filtr treści, linków, zaproszeń, wzmianek, caps locka, załączników i edycji wiadomości.",
         category = "safety",
         default_enabled = false,
         events = {
             "message_create",
+            "message_update",
         },
         config_schema = {
             type = "object",
@@ -228,7 +315,10 @@ return {
                 },
                 block_all_links = { type = "boolean", default = false },
                 block_invites = { type = "boolean", default = true },
+                block_suspicious_links = { type = "boolean", default = true },
+                block_everyone_here = { type = "boolean", default = true },
                 max_mentions = { type = "integer", minimum = 0, maximum = 50, default = 5 },
+                max_single_user_mentions = { type = "integer", minimum = 0, maximum = 20, default = 4 },
                 caps_min_letters = { type = "integer", minimum = 0, maximum = 2000, default = 15 },
                 max_caps_ratio = { type = "number", minimum = 0.1, maximum = 1.0, default = 0.8 },
                 max_repeated_characters = { type = "integer", minimum = 0, maximum = 100, default = 10 },
@@ -256,11 +346,11 @@ return {
     },
 
     on_event = function(event, ctx)
-        if event ~= "message_create" then return {} end
+        if event ~= "message_create" and event ~= "message_update" then return {} end
         if contains(ctx.config.excluded_channel_ids, ctx.channel_id) then return {} end
 
         local rule, evidence = evaluate(ctx)
         if not rule then return {} end
-        return build_actions(ctx, rule, evidence)
+        return build_actions(ctx, rule, evidence, event == "message_update")
     end,
 }

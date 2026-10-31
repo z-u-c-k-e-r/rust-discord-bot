@@ -63,6 +63,16 @@ impl Storage {
         }
     }
 
+    #[must_use]
+    pub fn postgres(pool: sqlx::PgPool) -> Self {
+        Self::Postgres(PostgresStore::new(pool))
+    }
+
+    #[must_use]
+    pub fn memory() -> Self {
+        Self::Memory(MemoryStore::default())
+    }
+
     pub async fn get_module_settings(
         &self,
         guild_id: &str,

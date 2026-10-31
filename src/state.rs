@@ -36,11 +36,36 @@ impl AppState {
             hook_granularity: config.lua_hook_granularity,
         };
         let scripts = LuaEngine::load(&config.scripts_dir, limits)?;
-        let storage = Storage::connect(config.database_url.as_deref()).await?;
-        let scheduler = SchedulerStore::connect(config.database_url.as_deref()).await?;
-        let tickets = TicketStore::connect(config.database_url.as_deref()).await?;
-        let moderation_cases = ModerationCaseStore::connect(config.database_url.as_deref()).await?;
-        let sessions = SessionStore::connect(config.database_url.as_deref()).await?;
+        let (storage, scheduler, tickets, moderation_cases, sessions) = if let Some(url) =
+            config.database_url.as_deref()
+        {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(25)
+                .min_connections(5)
+                .acquire_timeout(std::time::Duration::from_secs(5))
+                .connect(url)
+                .await?;
+            sqlx::migrate!("./migrations").run(&pool).await?;
+
+            (
+                Storage::postgres(pool.clone()),
+                SchedulerStore::postgres(pool.clone()),
+                TicketStore::postgres(pool.clone()),
+                ModerationCaseStore::postgres(pool.clone()),
+                SessionStore::postgres(pool),
+            )
+        } else {
+            tracing::warn!(
+                "DATABASE_URL is not set; running with volatile in-memory storage for all subsystems"
+            );
+            (
+                Storage::memory(),
+                SchedulerStore::memory(),
+                TicketStore::memory(),
+                ModerationCaseStore::memory(),
+                SessionStore::memory(),
+            )
+        };
         let user_agent = concat!("ZuckerBot/", env!("CARGO_PKG_VERSION"));
         let http_client = reqwest::Client::builder().user_agent(user_agent).build()?;
         let media_http_client = reqwest_songbird::Client::builder()

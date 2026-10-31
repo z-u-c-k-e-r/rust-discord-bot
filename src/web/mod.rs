@@ -60,6 +60,8 @@ pub async fn serve_with_shutdown(
 
     let router = Router::new()
         .route("/", get(static_files::index))
+        .route("/favicon.ico", get(static_files::favicon))
+        .route("/favicon.svg", get(static_files::favicon))
         .route("/assets/styles.css", get(static_files::styles))
         .route("/assets/app.js", get(static_files::javascript))
         .route("/healthz", get(routes::health_live))
@@ -98,6 +100,7 @@ pub async fn serve_with_shutdown(
             "/api/guilds/{guild_id}/audit",
             get(routes::guild_audit_events),
         )
+        .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             track_dashboard_requests,

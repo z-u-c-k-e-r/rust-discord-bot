@@ -25,9 +25,9 @@ end
 return {
     manifest = {
         id = "join_guard",
-        name = "Join Guard",
-        version = "1.0.0",
-        description = "Loguje wejścia oraz alarmuje o bardzo nowych kontach, botach i podejrzanych nazwach.",
+        name = "Join Guard & Anti-Raid",
+        version = "1.1.0",
+        description = "Wykrywa nowe konta, brak awatara, podejrzane nazwy oraz bursty dołączeń w trybie Anti-Raid.",
         category = "safety",
         default_enabled = false,
         events = {
@@ -40,7 +40,8 @@ return {
             properties = {
                 alert_channel_id = { type = "string", title = "Kanał alertów bezpieczeństwa" },
                 join_log_channel_id = { type = "string", title = "Opcjonalny kanał logów wejść" },
-                minimum_account_age_days = { type = "integer", minimum = 0, maximum = 3650, default = 7 },
+                minimum_account_age_hours = { type = "integer", minimum = 0, maximum = 87600, default = 24 },
+                alert_for_no_avatar = { type = "boolean", default = true },
                 alert_for_bots = { type = "boolean", default = true },
                 blocked_name_fragments = {
                     type = "array",
@@ -48,6 +49,14 @@ return {
                     items = { type = "string", minLength = 1, maxLength = 32 },
                     maxItems = 100,
                 },
+                raid_burst_threshold = { type = "integer", minimum = 2, maximum = 50, default = 5 },
+                action_on_raid = {
+                    type = "string",
+                    enum = { "alert", "quarantine", "kick", "timeout" },
+                    default = "alert",
+                },
+                quarantine_role_id = { type = "string", title = "ID roli kwarantanny dla nowych kont w czasie rajdu" },
+                raid_timeout_seconds = { type = "integer", minimum = 60, maximum = 2419200, default = 3600 },
                 log_safe_joins = { type = "boolean", default = false },
             },
         },
@@ -61,34 +70,91 @@ return {
 
         local now = zuckerbot.unix_time()
         local age_seconds = math.max(0, now - created_at)
+        local age_hours = math.floor(age_seconds / 3600)
         local age_days = math.floor(age_seconds / 86400)
-        local minimum_age = tonumber(ctx.config.minimum_account_age_days) or 7
+        local age_minutes = math.floor(age_seconds / 60)
+
+        local minimum_hours = tonumber(ctx.config.minimum_account_age_hours)
+        if minimum_hours == nil then
+            minimum_hours = (tonumber(ctx.config.minimum_account_age_days) or 1) * 24
+        end
+
         local name = user.global_name or user.name or "Nieznany"
         local fragment = suspicious_name(name, ctx.config.blocked_name_fragments)
+        local has_avatar = user.has_avatar
+        if has_avatar == nil and user.avatar ~= nil then
+            has_avatar = true
+        end
+
+        local recent_joins = tonumber(ctx.data.recent_joins_count) or 1
+        local burst_threshold = tonumber(ctx.config.raid_burst_threshold) or 5
+        local is_raid = recent_joins >= burst_threshold
 
         local reasons = {}
-        if age_days < minimum_age then
-            table.insert(reasons, "konto ma tylko " .. age_days .. " dni")
+        if age_hours < minimum_hours then
+            if age_hours == 0 then
+                table.insert(reasons, string.format("nowe konto (utworzone %d min temu)", age_minutes))
+            else
+                table.insert(reasons, string.format("młode konto (%d godz. / %d dni)", age_hours, age_days))
+            end
         end
+
+        if has_avatar == false and ctx.config.alert_for_no_avatar ~= false then
+            table.insert(reasons, "brak awatara (domyślny awatar Discorda)")
+        end
+
         if user.bot == true and ctx.config.alert_for_bots ~= false then
             table.insert(reasons, "dołączyło konto bota")
         end
+
         if fragment then
             table.insert(reasons, "nazwa zawiera zablokowany fragment: " .. fragment)
+        end
+
+        if is_raid then
+            table.insert(reasons, string.format("🚨 WYKRYTO BURST / RAJD (%d wejść w oknie 60 s!)", recent_joins))
         end
 
         local actions = {}
         local identity = string.format("<@%s> (`%s`, %s)", tostring(user.id), tostring(user.id), zuckerbot.escape_mentions(name))
 
+        if is_raid then
+            local raid_action = ctx.config.action_on_raid or "alert"
+            if raid_action == "kick" then
+                table.insert(actions, {
+                    type = "kick_member",
+                    user_id = tostring(user.id),
+                    reason = "JoinGuard: automatyczna ochrona przed rajdem (Lockdown)",
+                })
+            elseif raid_action == "timeout" then
+                table.insert(actions, {
+                    type = "timeout_member",
+                    user_id = tostring(user.id),
+                    seconds = tonumber(ctx.config.raid_timeout_seconds) or 3600,
+                    reason = "JoinGuard: ochrona przed rajdem",
+                })
+            elseif raid_action == "quarantine" and ctx.config.quarantine_role_id and ctx.config.quarantine_role_id ~= "" then
+                table.insert(actions, {
+                    type = "add_role",
+                    user_id = tostring(user.id),
+                    role_id = ctx.config.quarantine_role_id,
+                    reason = "JoinGuard: kwarantanna w trybie rajdu",
+                })
+            end
+        end
+
         if #reasons > 0 and ctx.config.alert_channel_id and ctx.config.alert_channel_id ~= "" then
+            local prefix = is_raid and "@here 🚨 **Join Guard: ALARM OCHRONY PRZED RAJDEM**\n" or "🛡️ **Join Guard: konto wymaga uwagi**\n"
             table.insert(actions, {
                 type = "send_message",
                 channel_id = ctx.config.alert_channel_id,
                 content = string.format(
-                    "🛡️ **Join Guard: konto wymaga uwagi**\nUżytkownik: %s\nUtworzenie konta: <t:%d:F> (<t:%d:R>)\nPowody: %s",
+                    "%sUżytkownik: %s\nUtworzenie konta: <t:%d:F> (<t:%d:R>)\nAwatar: %s\nPowody: %s",
+                    prefix,
                     identity,
                     created_at,
                     created_at,
+                    has_avatar == false and "❌ Brak (domyślny)" or "✅ Ustawiony",
                     zuckerbot.escape_mentions(table.concat(reasons, "; "))
                 ),
             })
@@ -100,9 +166,11 @@ return {
                 type = "send_message",
                 channel_id = log_channel,
                 content = string.format(
-                    "➡️ **Nowy członek**: %s\nWiek konta: **%d dni**\nOcena: **%s**",
+                    "➡️ **Nowy członek**: %s\nWiek konta: **%d godz. (%d dni)**\nAwatar: %s\nOcena: **%s**",
                     identity,
+                    age_hours,
                     age_days,
+                    has_avatar == false and "Brak" or "Jest",
                     #reasons > 0 and "wymaga uwagi" or "bez alertów"
                 ),
             })
@@ -110,11 +178,14 @@ return {
 
         table.insert(actions, {
             type = "audit",
-            event = #reasons > 0 and "join_guard_flagged" or "join_guard_checked",
+            event = is_raid and "join_guard_raid_lockdown" or (#reasons > 0 and "join_guard_flagged" or "join_guard_checked"),
             data = {
                 user_id = tostring(user.id),
                 account_created_at = created_at,
-                account_age_days = age_days,
+                account_age_hours = age_hours,
+                has_avatar = has_avatar,
+                recent_joins_count = recent_joins,
+                is_raid = is_raid,
                 reasons = reasons,
             },
         })

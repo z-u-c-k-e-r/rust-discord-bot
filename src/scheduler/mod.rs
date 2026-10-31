@@ -54,6 +54,11 @@ impl SchedulerStore {
         Self::Memory(MemorySchedulerStore::default())
     }
 
+    #[must_use]
+    pub fn postgres(pool: sqlx::PgPool) -> Self {
+        Self::Postgres(PostgresSchedulerStore::new(pool))
+    }
+
     pub async fn create_job(
         &self,
         job: NewScheduledJob,

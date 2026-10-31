@@ -122,8 +122,10 @@ pub fn level_for_xp(xp: i64) -> i32 {
         return 0;
     }
 
-    let level = ((1.0 + 0.08 * xp as f64).sqrt() - 1.0) / 2.0;
-    level.floor().clamp(0.0, i32::MAX as f64) as i32
+    let val = (xp as u128).saturating_mul(8).saturating_add(100);
+    let root = val.isqrt();
+    let level = root.saturating_sub(10) / 20;
+    level.min(i32::MAX as u128) as i32
 }
 
 pub fn total_xp_for_level(level: i32) -> i64 {

@@ -335,6 +335,11 @@ impl LuaAction {
                 {
                     return Err("music play requires a query".to_owned());
                 }
+                if matches!(operation, MusicOperation::Volume)
+                    && query.as_deref().is_none_or(str::is_empty)
+                {
+                    return Err("music volume requires a level value".to_owned());
+                }
                 Ok(())
             }
             Self::Progression { operation } => operation.validate(),
@@ -361,6 +366,8 @@ pub enum MusicOperation {
     Stop,
     Leave,
     Queue,
+    Volume,
+    Loop,
 }
 
 fn has_duplicates<T: PartialEq>(values: &[T]) -> bool {

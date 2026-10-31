@@ -63,6 +63,14 @@ impl ApiError {
         }
     }
 
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: message.into(),
+            details: None,
+        }
+    }
+
     pub fn validation(message: impl Into<String>, details: Vec<String>) -> Self {
         Self {
             status: StatusCode::UNPROCESSABLE_ENTITY,
@@ -82,11 +90,30 @@ impl ApiError {
     }
 
     pub fn upstream(error: reqwest::Error) -> Self {
-        tracing::warn!(?error, "Discord OAuth2 request failed");
+        tracing::warn!(?error, "Discord OAuth2/API request failed");
         Self {
             status: StatusCode::BAD_GATEWAY,
-            message: "Discord nie odpowiedział poprawnie podczas logowania.".to_owned(),
+            message: "Discord nie odpowiedział poprawnie podczas komunikacji z API.".to_owned(),
             details: None,
+        }
+    }
+}
+
+impl From<crate::moderation_cases::CaseError> for ApiError {
+    fn from(error: crate::moderation_cases::CaseError) -> Self {
+        match error {
+            crate::moderation_cases::CaseError::NotFound => {
+                Self::not_found("Sprawa moderacyjna nie została znaleziona.")
+            }
+            crate::moderation_cases::CaseError::VersionConflict { expected, actual } => {
+                Self::conflict(format!(
+                    "Konflikt wersji sprawy: oczekiwano {expected}, aktualna wersja to {actual}. Odśwież widok."
+                ))
+            }
+            crate::moderation_cases::CaseError::Validation(msg) => Self::bad_request(msg),
+            crate::moderation_cases::CaseError::Database(err) => {
+                Self::internal(format!("Błąd bazy danych sprawy: {err}"))
+            }
         }
     }
 }
@@ -118,11 +145,6 @@ pub struct UpdateModuleRequest {
 }
 
 pub async fn health_live(State(state): State<WebState>) -> Json<Value> {
-    state
-        .app
-        .metrics
-        .dashboard_requests_total
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Json(json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
@@ -133,11 +155,6 @@ pub async fn health_live(State(state): State<WebState>) -> Json<Value> {
 pub async fn health_ready(
     State(state): State<WebState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    state
-        .app
-        .metrics
-        .dashboard_requests_total
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut checks = serde_json::Map::new();
     let mut is_ready = true;
 
@@ -371,9 +388,7 @@ pub async fn guild_case_details(
         .moderation_cases
         .get_case(guild_u64, case_number, Utc::now())
         .await
-        .map_err(|error| {
-            ApiError::not_found(format!("Nie znaleziono sprawy #{case_number}: {error}"))
-        })?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(details))
 }
@@ -458,7 +473,7 @@ pub async fn add_guild_case_note(
             now,
         )
         .await
-        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let _ = state
         .app
@@ -511,7 +526,7 @@ pub async fn void_guild_case(
             .moderation_cases
             .get_case(guild_u64, case_number, now)
             .await
-            .map_err(|error| ApiError::not_found(error.to_string()))?;
+            .map_err(ApiError::from)?;
         current.case.version
     } else {
         payload.expected_version
@@ -529,7 +544,7 @@ pub async fn void_guild_case(
             now,
         )
         .await
-        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let _ = state
         .app
@@ -575,7 +590,7 @@ pub async fn update_guild_case(
             .moderation_cases
             .get_case(guild_u64, case_number, now)
             .await
-            .map_err(|error| ApiError::not_found(error.to_string()))?;
+            .map_err(ApiError::from)?;
         current.case.version
     } else {
         payload.expected_version
@@ -603,7 +618,7 @@ pub async fn update_guild_case(
         .moderation_cases
         .update_case(guild_u64, case_number, actor_u64, version, update, now)
         .await
-        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let _ = state
         .app

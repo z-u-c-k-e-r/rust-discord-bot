@@ -1,10 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
+use dashmap::DashMap;
 use serde_json::{Map, Value, json};
 use serenity::{
     all::{
-        CommandDataOption, CommandDataOptionValue, CommandInteraction, Interaction, Member,
-        Message, Ready,
+        CommandDataOption, CommandDataOptionValue, CommandInteraction, GuildId, Interaction,
+        Member, Message, MessageUpdateEvent, Ready, VoiceState,
     },
     async_trait,
     builder::{CreateAllowedMentions, CreateInteractionResponse, CreateInteractionResponseMessage},
@@ -21,13 +23,15 @@ use super::{commands, executor};
 pub struct Handler {
     state: AppState,
     commands_registered: AtomicBool,
+    recent_joins: DashMap<GuildId, Vec<Instant>>,
 }
 
 impl Handler {
-    pub const fn new(state: AppState) -> Self {
+    pub fn new(state: AppState) -> Self {
         Self {
             state,
             commands_registered: AtomicBool::new(false),
+            recent_joins: DashMap::new(),
         }
     }
 }
@@ -111,6 +115,8 @@ impl EventHandler for Handler {
                     "global_name": message.author.global_name,
                 },
                 "mentions": message.mentions.iter().map(|user| user.id).collect::<Vec<_>>(),
+                "mention_roles": message.mention_roles.iter().map(|role| role.get().to_string()).collect::<Vec<_>>(),
+                "mention_everyone": message.mention_everyone,
                 "attachments": message.attachments.iter().map(|attachment| {
                     json!({
                         "id": attachment.id,
@@ -136,6 +142,142 @@ impl EventHandler for Handler {
         .await;
     }
 
+    async fn message_update(
+        &self,
+        ctx: Context,
+        _old_if_available: Option<Message>,
+        new: Option<Message>,
+        event: MessageUpdateEvent,
+    ) {
+        self.state
+            .metrics
+            .discord_events_total
+            .fetch_add(1, Ordering::Relaxed);
+
+        let is_bot = event
+            .author
+            .as_ref()
+            .map(|u| u.bot)
+            .or_else(|| new.as_ref().map(|m| m.author.bot))
+            .unwrap_or(false);
+        if is_bot {
+            return;
+        }
+
+        let guild_id = event
+            .guild_id
+            .or_else(|| new.as_ref().and_then(|m| m.guild_id));
+        let Some(guild_id) = guild_id else {
+            return;
+        };
+
+        let content = event
+            .content
+            .as_ref()
+            .or_else(|| new.as_ref().map(|m| &m.content));
+        let Some(content) = content else {
+            return;
+        };
+
+        let author_id = event
+            .author
+            .as_ref()
+            .map(|u| u.id)
+            .or_else(|| new.as_ref().map(|m| m.author.id));
+        let author_name = event
+            .author
+            .as_ref()
+            .map(|u| u.name.clone())
+            .or_else(|| new.as_ref().map(|m| m.author.name.clone()));
+        let author_global_name = event
+            .author
+            .as_ref()
+            .and_then(|u| u.global_name.clone())
+            .or_else(|| new.as_ref().and_then(|m| m.author.global_name.clone()));
+
+        let mentions: Vec<_> = event
+            .mentions
+            .as_ref()
+            .map(|m| m.iter().map(|u| u.id).collect())
+            .or_else(|| {
+                new.as_ref()
+                    .map(|m| m.mentions.iter().map(|u| u.id).collect())
+            })
+            .unwrap_or_default();
+
+        let mention_roles: Vec<_> = event
+            .mention_roles
+            .as_ref()
+            .map(|r| r.iter().map(|role| role.get().to_string()).collect())
+            .or_else(|| {
+                new.as_ref().map(|m| {
+                    m.mention_roles
+                        .iter()
+                        .map(|role| role.get().to_string())
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+
+        let mention_everyone = event
+            .mention_everyone
+            .or_else(|| new.as_ref().map(|m| m.mention_everyone))
+            .unwrap_or(false);
+
+        let attachments = event
+            .attachments
+            .as_ref()
+            .or_else(|| new.as_ref().map(|m| &m.attachments));
+        let attachments_json: Vec<_> = attachments
+            .map(|list| {
+                list.iter()
+                    .map(|attachment| {
+                        json!({
+                            "id": attachment.id,
+                            "filename": attachment.filename,
+                            "size": attachment.size,
+                            "content_type": attachment.content_type,
+                            "url": attachment.url,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let event_context = LuaEventContext {
+            name: "message_update".to_owned(),
+            guild_id: Some(guild_id.get().to_string()),
+            channel_id: Some(event.channel_id.get().to_string()),
+            actor_id: author_id.map(|id| id.get().to_string()),
+            data: json!({
+                "message_id": event.id,
+                "content": content,
+                "author": {
+                    "id": author_id,
+                    "name": author_name,
+                    "global_name": author_global_name,
+                },
+                "mentions": mentions,
+                "mention_roles": mention_roles,
+                "mention_everyone": mention_everyone,
+                "attachments": attachments_json,
+                "is_edit": true,
+            }),
+            config: Value::Null,
+        };
+
+        run_event(
+            &ctx,
+            &self.state,
+            "message_update",
+            event_context,
+            Some(guild_id),
+            Some(event.channel_id),
+            author_id,
+        )
+        .await;
+    }
+
     async fn guild_member_addition(&self, ctx: Context, new_member: Member) {
         self.state
             .metrics
@@ -143,6 +285,15 @@ impl EventHandler for Handler {
             .fetch_add(1, Ordering::Relaxed);
 
         let guild_id = new_member.guild_id;
+        let now = Instant::now();
+        let window = Duration::from_secs(60);
+
+        let mut entry = self.recent_joins.entry(guild_id).or_default();
+        entry.retain(|&ts| now.saturating_duration_since(ts) < window);
+        entry.push(now);
+        let recent_joins_count = entry.len();
+        drop(entry);
+
         let event = LuaEventContext {
             name: "guild_member_add".to_owned(),
             guild_id: Some(guild_id.get().to_string()),
@@ -154,9 +305,13 @@ impl EventHandler for Handler {
                     "name": new_member.user.name,
                     "global_name": new_member.user.global_name,
                     "bot": new_member.user.bot,
+                    "avatar": new_member.user.avatar.map(|hash| hash.to_string()),
+                    "has_avatar": new_member.user.avatar.is_some(),
                 },
                 "roles": new_member.roles,
                 "joined_at": new_member.joined_at,
+                "recent_joins_count": recent_joins_count,
+                "recent_joins_window_seconds": 60,
             }),
             config: Value::Null,
         };
@@ -171,6 +326,18 @@ impl EventHandler for Handler {
             Some(new_member.user.id),
         )
         .await;
+    }
+
+    async fn voice_state_update(&self, ctx: Context, _old: Option<VoiceState>, new: VoiceState) {
+        if let Some(guild_id) = new.guild_id {
+            let bot_id = ctx.cache.current_user().id;
+            if new.user_id == bot_id
+                && new.channel_id.is_none()
+                && let Some(manager) = songbird::get(&ctx).await
+            {
+                let _ = manager.remove(guild_id).await;
+            }
+        }
     }
 }
 
