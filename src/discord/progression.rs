@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use serenity::{
-    all::{ChannelId, GuildId, Permissions, UserId},
+    all::{ChannelId, GuildId, Permissions, RoleId, UserId},
     builder::{CreateAllowedMentions, CreateMessage},
     client::Context,
 };
@@ -79,6 +79,7 @@ pub async fn execute(
             cooldown_seconds,
             announce_level_up,
             level_up_message,
+            role_rewards,
         } => {
             let award = state
                 .storage
@@ -107,14 +108,66 @@ pub async fn execute(
                     )
                     .await?;
 
+                let mut granted_roles = Vec::new();
+                for reward in role_rewards {
+                    if reward.level > award.previous_level
+                        && reward.level <= award.profile.level
+                        && let Ok(role_id) = reward.role_id.parse::<u64>()
+                    {
+                        let role_snowflake = RoleId::new(role_id);
+                        if let Err(err) = ctx
+                            .http
+                            .add_member_role(
+                                guild_id,
+                                actor_id,
+                                role_snowflake,
+                                Some("Osiągnięto poziom w systemie levelingu"),
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                guild_id = %guild_id,
+                                user_id = %actor_id,
+                                role_id = %reward.role_id,
+                                error = %err,
+                                "Nie udało się nadać roli za awans"
+                            );
+                        } else {
+                            granted_roles.push(reward.role_id.clone());
+                            state
+                                .storage
+                                .record_audit(
+                                    Some(&guild_key),
+                                    Some(&actor_key),
+                                    module_id,
+                                    "level_role_reward_granted",
+                                    serde_json::json!({
+                                        "user_id": actor_key,
+                                        "level": reward.level,
+                                        "role_id": reward.role_id,
+                                    }),
+                                )
+                                .await?;
+                        }
+                    }
+                }
+
                 if *announce_level_up && let Some(channel_id) = channel_id {
                     let template = level_up_message.as_deref().unwrap_or(
                         "🎉 {user} awansuje na poziom **{level}**! Łączne XP: **{xp}**.",
                     );
-                    let content = template
+                    let mut content = template
                         .replace("{user}", &format!("<@{}>", actor_id.get()))
                         .replace("{level}", &award.profile.level.to_string())
                         .replace("{xp}", &award.profile.xp.to_string());
+                    if !granted_roles.is_empty() {
+                        let roles_str = granted_roles
+                            .iter()
+                            .map(|r| format!("<@&{r}>"))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        content.push_str(&format!("\n🎖️ Nowe odblokowane role: {roles_str}"));
+                    }
                     channel_id
                         .send_message(
                             &ctx.http,
@@ -138,12 +191,14 @@ pub async fn execute(
             let next_level = total_xp_for_level(profile.level.saturating_add(1));
             let current_progress = profile.xp.saturating_sub(level_floor);
             let required_progress = next_level.saturating_sub(level_floor).max(1);
+            let bar = render_progress_bar(current_progress, required_progress, 10);
 
             Ok(Some(format!(
-                "👤 **Profil <@{target}>**\nPoziom: **{}**\nXP: **{}** / **{}** do kolejnego poziomu\nMonety: **{}**\nReputacja: **{}**\nWiadomości: **{}**\nSeria daily: **{}**",
+                "👤 **Profil <@{target}>**\nPoziom: **{}** {bar}\nXP: **{}** / **{}** do kolejnego poziomu (pozostało: **{}** XP)\nMonety: **{}**\nReputacja: **{}**\nWiadomości: **{}**\nSeria daily: **{}**",
                 profile.level,
                 current_progress,
                 required_progress,
+                required_progress.saturating_sub(current_progress),
                 profile.coins,
                 profile.reputation,
                 profile.messages,
@@ -389,4 +444,34 @@ const fn storage_metric(metric: LuaProgressionMetric) -> ProgressMetric {
 fn has_manage_guild(permissions: Permissions) -> bool {
     permissions.contains(Permissions::ADMINISTRATOR)
         || permissions.contains(Permissions::MANAGE_GUILD)
+}
+
+#[must_use]
+pub fn render_progress_bar(current: i64, required: i64, length: usize) -> String {
+    let ratio = if required <= 0 {
+        1.0
+    } else {
+        (current as f64 / required as f64).clamp(0.0, 1.0)
+    };
+    let filled = (ratio * length as f64).round() as usize;
+    let empty = length.saturating_sub(filled);
+    format!(
+        "[{}{}] {:.1}%",
+        "▰".repeat(filled),
+        "▱".repeat(empty),
+        ratio * 100.0
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_progress_bar_calculations() {
+        assert_eq!(render_progress_bar(0, 100, 10), "[▱▱▱▱▱▱▱▱▱▱] 0.0%");
+        assert_eq!(render_progress_bar(50, 100, 10), "[▰▰▰▰▰▱▱▱▱▱] 50.0%");
+        assert_eq!(render_progress_bar(100, 100, 10), "[▰▰▰▰▰▰▰▰▰▰] 100.0%");
+        assert_eq!(render_progress_bar(150, 100, 10), "[▰▰▰▰▰▰▰▰▰▰] 100.0%");
+    }
 }

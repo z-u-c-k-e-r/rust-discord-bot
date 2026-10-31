@@ -4,7 +4,10 @@ use std::{
 };
 
 use serde_json::json;
-use zuckerbot::lua::{LuaAction, LuaEngine, LuaEventContext, LuaExecutionContext, LuaLimits};
+use zuckerbot::lua::{
+    LuaAction, LuaEngine, LuaEventContext, LuaExecutionContext, LuaLimits, MusicOperation,
+    ProgressionOperation,
+};
 
 fn limits() -> LuaLimits {
     LuaLimits {
@@ -215,4 +218,175 @@ async fn join_guard_flags_a_fresh_discord_account() {
         }) if channel_id == "100000000000000006"
     ));
     assert!(matches!(actions.last(), Some(LuaAction::Audit { .. })));
+}
+
+#[tokio::test]
+async fn automod_intercepts_message_update_with_discord_invite() {
+    let event = LuaEventContext {
+        name: "message_update".to_owned(),
+        guild_id: Some("100000000000000001".to_owned()),
+        channel_id: Some("100000000000000002".to_owned()),
+        actor_id: Some("100000000000000003".to_owned()),
+        data: json!({
+            "message_id": "100000000000000004",
+            "content": "Hej, wpadajcie do nas: dsc.gg/zucker-community",
+            "mentions": [],
+            "attachments": [],
+            "is_edit": true
+        }),
+        config: json!({
+            "block_invites": true,
+            "delete_messages": true,
+            "send_notice": true,
+            "alert_channel_id": "100000000000000006"
+        }),
+    };
+
+    let actions = engine()
+        .execute_event("automod", "message_update", event)
+        .await
+        .expect("automod message_update event should execute");
+
+    assert!(matches!(
+        actions.first(),
+        Some(LuaAction::DeleteMessage { .. })
+    ));
+    assert!(actions.iter().any(|action| matches!(
+        action,
+        LuaAction::SendMessage { content, .. } if content.contains("edycji wiadomości")
+    )));
+    assert!(matches!(
+        actions.last(),
+        Some(LuaAction::Audit { event, .. }) if event == "automod_edit_rule_match"
+    ));
+}
+
+#[tokio::test]
+async fn join_guard_detects_raid_burst_and_triggers_lockdown() {
+    let event = LuaEventContext {
+        name: "guild_member_add".to_owned(),
+        guild_id: Some("100000000000000001".to_owned()),
+        channel_id: None,
+        actor_id: Some("100000000000000003".to_owned()),
+        data: json!({
+            "user": {
+                "id": "100000000000000003",
+                "name": "RaidBot1",
+                "global_name": "Raid Bot 1",
+                "bot": false,
+                "has_avatar": false
+            },
+            "roles": [],
+            "joined_at": null,
+            "recent_joins_count": 8,
+            "recent_joins_window_seconds": 60
+        }),
+        config: json!({
+            "alert_channel_id": "100000000000000006",
+            "raid_burst_threshold": 5,
+            "action_on_raid": "kick"
+        }),
+    };
+
+    let actions = engine()
+        .execute_event("join_guard", "guild_member_add", event)
+        .await
+        .expect("join guard event should execute");
+
+    assert!(actions.iter().any(|action| matches!(
+        action,
+        LuaAction::KickMember { reason, .. } if reason.as_deref().is_some_and(|r| r.contains("Lockdown"))
+    )));
+    assert!(actions.iter().any(|action| matches!(
+        action,
+        LuaAction::SendMessage { content, .. } if content.contains("ALARM OCHRONY PRZED RAJDEM")
+    )));
+}
+
+#[tokio::test]
+async fn music_command_supports_volume_and_loop() {
+    let engine = engine();
+
+    let volume_actions = engine
+        .execute_command(
+            "music",
+            "music",
+            context(json!({ "action": "volume", "query": "80" }), json!({})),
+        )
+        .await
+        .expect("music volume command should execute");
+
+    assert!(matches!(
+        volume_actions.get(1),
+        Some(LuaAction::Music { operation, query: Some(q) })
+            if matches!(operation, MusicOperation::Volume) && q == "80"
+    ));
+
+    let loop_actions = engine
+        .execute_command(
+            "music",
+            "music",
+            context(json!({ "action": "loop" }), json!({})),
+        )
+        .await
+        .expect("music loop command should execute");
+
+    assert!(matches!(
+        loop_actions.get(1),
+        Some(LuaAction::Music { operation, query: None })
+            if matches!(operation, MusicOperation::Loop)
+    ));
+}
+
+#[tokio::test]
+async fn progression_event_awards_xp_and_passes_role_rewards() {
+    let event = LuaEventContext {
+        name: "message_create".to_owned(),
+        guild_id: Some("100000000000000001".to_owned()),
+        channel_id: Some("100000000000000002".to_owned()),
+        actor_id: Some("100000000000000003".to_owned()),
+        data: json!({
+            "message_id": "100000000000000004",
+            "content": "Witajcie serdecznie na naszym serwerze!",
+        }),
+        config: json!({
+            "xp_min": 20,
+            "xp_max": 20,
+            "xp_cooldown_seconds": 45,
+            "announce_level_up": true,
+            "role_rewards": [
+                { "level": 5, "role_id": "100000000000000005" },
+                { "level": 10, "role_id": "100000000000000010" }
+            ]
+        }),
+    };
+
+    let actions = engine()
+        .execute_event("progression", "message_create", event)
+        .await
+        .expect("progression message_create event should execute");
+
+    assert_eq!(actions.len(), 1);
+    match actions.first().unwrap() {
+        LuaAction::Progression { operation } => match operation {
+            ProgressionOperation::AwardMessageXp {
+                amount,
+                cooldown_seconds,
+                announce_level_up,
+                role_rewards,
+                ..
+            } => {
+                assert_eq!(*amount, 20);
+                assert_eq!(*cooldown_seconds, 45);
+                assert!(*announce_level_up);
+                assert_eq!(role_rewards.len(), 2);
+                assert_eq!(role_rewards[0].level, 5);
+                assert_eq!(role_rewards[0].role_id, "100000000000000005");
+                assert_eq!(role_rewards[1].level, 10);
+                assert_eq!(role_rewards[1].role_id, "100000000000000010");
+            }
+            other => panic!("expected AwardMessageXp operation, got {other:?}"),
+        },
+        other => panic!("expected Progression action, got {other:?}"),
+    }
 }

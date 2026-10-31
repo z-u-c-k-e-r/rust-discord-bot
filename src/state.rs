@@ -12,6 +12,13 @@ use crate::{
     tickets::TicketStore,
 };
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct GuildRealtimeEvent {
+    pub guild_id: String,
+    pub event_type: String,
+    pub payload: serde_json::Value,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -25,6 +32,7 @@ pub struct AppState {
     pub metrics: Arc<crate::metrics::Metrics>,
     pub sessions: SessionStore,
     pub rate_limiter: Arc<crate::rate_limit::RateLimiter>,
+    pub guild_events: tokio::sync::broadcast::Sender<GuildRealtimeEvent>,
 }
 
 impl AppState {
@@ -94,6 +102,7 @@ impl AppState {
 
         let metrics = Arc::new(crate::metrics::Metrics::new());
         let rate_limiter = Arc::new(crate::rate_limit::RateLimiter::new());
+        let (guild_events, _) = tokio::sync::broadcast::channel(512);
         Ok(Self {
             config,
             scripts,
@@ -106,6 +115,7 @@ impl AppState {
             metrics,
             sessions,
             rate_limiter,
+            guild_events,
         })
     }
 }

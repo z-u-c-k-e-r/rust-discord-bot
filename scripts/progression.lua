@@ -167,6 +167,19 @@ return {
                     maxLength = 500,
                     default = "🎉 {user} awansuje na poziom **{level}**! Łączne XP: **{xp}**.",
                 },
+                role_rewards = {
+                    type = "array",
+                    items = {
+                        type = "object",
+                        required = { "level", "role_id" },
+                        additionalProperties = false,
+                        properties = {
+                            level = { type = "integer", minimum = 1, maximum = 1000 },
+                            role_id = { type = "string" },
+                        },
+                    },
+                    maxItems = 50,
+                },
                 daily_base_reward = { type = "integer", minimum = 1, maximum = 1000000, default = 100 },
                 daily_streak_bonus = { type = "integer", minimum = 0, maximum = 100000, default = 10 },
                 daily_max_streak_bonus = { type = "integer", minimum = 0, maximum = 365, default = 30 },
@@ -264,6 +277,7 @@ return {
         local minimum_length = math.tointeger(ctx.config.minimum_message_length or 3) or 3
         if #content < minimum_length then return {} end
         if starts_with_any(content, ctx.config.ignored_prefixes or { "!", "/" }) then return {} end
+        if string.match(content, "^(.)%1*$") and #content > 4 then return {} end
 
         local minimum = math.tointeger(ctx.config.xp_min or 15) or 15
         local maximum = math.tointeger(ctx.config.xp_max or 25) or 25
@@ -273,12 +287,16 @@ return {
         local range = maximum - minimum + 1
         local amount = minimum + (hash(tostring(ctx.data.message_id or content)) % range)
 
-        return action({
+        local op = {
             type = "award_message_xp",
             amount = amount,
             cooldown_seconds = math.tointeger(ctx.config.xp_cooldown_seconds or 60) or 60,
             announce_level_up = ctx.config.announce_level_up ~= false,
             level_up_message = ctx.config.level_up_message,
-        })
+        }
+        if type(ctx.config.role_rewards) == "table" and #ctx.config.role_rewards > 0 then
+            op.role_rewards = ctx.config.role_rewards
+        end
+        return action(op)
     end,
 }

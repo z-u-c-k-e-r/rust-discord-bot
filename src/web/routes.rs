@@ -1,12 +1,19 @@
+use std::convert::Infallible;
+
 use axum::{
     Json,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::lua::LuaModuleManifest;
 
@@ -333,6 +340,18 @@ pub async fn update_guild_module(
         .await
         .map_err(|error| ApiError::internal(error.to_string()))?;
 
+    let _ = state
+        .app
+        .guild_events
+        .send(crate::state::GuildRealtimeEvent {
+            guild_id: guild_id.clone(),
+            event_type: "module_updated".to_string(),
+            payload: json!({
+                "module_id": module_id,
+                "enabled": settings.enabled,
+            }),
+        });
+
     Ok(Json(ModuleView {
         manifest,
         enabled: settings.enabled,
@@ -490,6 +509,18 @@ pub async fn add_guild_case_note(
         )
         .await;
 
+    let _ = state
+        .app
+        .guild_events
+        .send(crate::state::GuildRealtimeEvent {
+            guild_id: guild_id.clone(),
+            event_type: "case_updated".to_string(),
+            payload: json!({
+                "case_number": case_number,
+                "action": "note_added",
+            }),
+        });
+
     Ok(Json(note))
 }
 
@@ -560,6 +591,18 @@ pub async fn void_guild_case(
             }),
         )
         .await;
+
+    let _ = state
+        .app
+        .guild_events
+        .send(crate::state::GuildRealtimeEvent {
+            guild_id: guild_id.clone(),
+            event_type: "case_updated".to_string(),
+            payload: json!({
+                "case_number": case_number,
+                "action": "voided",
+            }),
+        });
 
     Ok(Json(voided))
 }
@@ -635,5 +678,49 @@ pub async fn update_guild_case(
         )
         .await;
 
+    let _ = state
+        .app
+        .guild_events
+        .send(crate::state::GuildRealtimeEvent {
+            guild_id: guild_id.clone(),
+            event_type: "case_updated".to_string(),
+            payload: json!({
+                "case_number": case_number,
+                "version": updated.version,
+                "action": "edited",
+            }),
+        });
+
     Ok(Json(updated))
+}
+
+pub async fn guild_events_stream(
+    State(state): State<WebState>,
+    Path(guild_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    let (_, session) = authenticate(&state, &headers).await?;
+    ensure_guild_access(&state, &session, &guild_id).await?;
+
+    let rx = state.app.guild_events.subscribe();
+    let target_guild = guild_id.clone();
+
+    let initial = tokio_stream::once(Ok(Event::default()
+        .event("connected")
+        .data(json!({ "guild_id": target_guild }).to_string())));
+
+    let stream = BroadcastStream::new(rx).filter_map(move |item| match item {
+        Ok(event) if event.guild_id == target_guild => Some(Ok(Event::default()
+            .event(event.event_type)
+            .data(event.payload.to_string()))),
+        _ => None,
+    });
+
+    let combined = initial.chain(stream);
+
+    Ok(Sse::new(combined).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }

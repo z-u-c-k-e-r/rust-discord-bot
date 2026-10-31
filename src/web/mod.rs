@@ -100,6 +100,10 @@ pub async fn serve_with_shutdown(
             "/api/guilds/{guild_id}/audit",
             get(routes::guild_audit_events),
         )
+        .route(
+            "/api/guilds/{guild_id}/events",
+            get(routes::guild_events_stream),
+        )
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .layer(middleware::from_fn_with_state(
             state.clone(),

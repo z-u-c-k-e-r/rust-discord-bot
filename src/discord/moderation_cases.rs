@@ -243,6 +243,16 @@ pub async fn execute(
                 )
                 .await;
 
+            let _ = state.guild_events.send(crate::state::GuildRealtimeEvent {
+                guild_id: guild_id.get().to_string(),
+                event_type: "case_created".to_string(),
+                payload: serde_json::json!({
+                    "case_number": created.case_number,
+                    "subject_user_id": subject_user_id,
+                    "kind": kind,
+                }),
+            });
+
             Ok(Some(format!(
                 "⚖️ Zarejestrowano sprawę moderacyjną **#{case_number}** dla <@{subject_user_id}> [{kind} | {severity} | punkty: {points}]: {reason}",
                 case_number = created.case_number,

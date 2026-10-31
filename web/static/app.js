@@ -42,6 +42,7 @@ const state = {
   activeTab: "modules",
   modulesData: [],
   analyticsTimer: null,
+  eventSource: null,
   requestHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   pendingVoidCase: null,
 };
@@ -197,11 +198,68 @@ function switchTab(tab) {
 }
 
 function showLogin() {
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
   state.session = null;
   ui.loginView?.classList.remove("hidden");
   ui.dashboardView?.classList.add("hidden");
   ui.account?.classList.add("hidden");
   ui.logoutButton?.classList.add("hidden");
+}
+
+function initRealtimeStream() {
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+  if (!state.guildId) return;
+
+  try {
+    const sse = new EventSource(`/api/guilds/${encodeURIComponent(state.guildId)}/events`);
+    state.eventSource = sse;
+
+    sse.addEventListener("connected", () => {
+      console.log("Realtime SSE połączony dla serwera:", state.guildId);
+    });
+
+    sse.addEventListener("case_updated", () => {
+      showToast("Zaktualizowano sprawę moderacyjną", "info", 3000);
+      if (state.activeTab === "moderation") {
+        loadCases();
+      }
+      updateKpis();
+    });
+
+    sse.addEventListener("case_created", () => {
+      showToast("Utworzono nową sprawę moderacyjną", "info", 3000);
+      if (state.activeTab === "moderation") {
+        loadCases();
+      }
+      updateKpis();
+    });
+
+    sse.addEventListener("module_updated", () => {
+      if (state.activeTab === "modules") {
+        loadModules();
+      }
+      updateKpis();
+    });
+
+    sse.addEventListener("audit_entry", () => {
+      if (state.activeTab === "audit") {
+        loadAudit();
+      }
+      updateKpis();
+    });
+
+    sse.onerror = () => {
+      // EventSource automatycznie ponawia połączenie
+    };
+  } catch (err) {
+    console.warn("Błąd inicjalizacji SSE, aktywne odpytywanie awaryjne", err);
+  }
 }
 
 async function showDashboard() {
@@ -239,6 +297,7 @@ async function showDashboard() {
 
   state.guildId = state.session.guilds[0].id;
   ui.guildSelect.value = state.guildId;
+  initRealtimeStream();
   switchTab(state.activeTab);
   loadLiveUptime();
 }
@@ -996,6 +1055,7 @@ function messageCard(title, body) {
 
 ui.guildSelect?.addEventListener("change", async (event) => {
   state.guildId = event.target.value;
+  initRealtimeStream();
   switchTab(state.activeTab);
 });
 

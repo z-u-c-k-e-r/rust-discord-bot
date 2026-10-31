@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LevelRoleReward {
+    pub level: i32,
+    pub role_id: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProgressionOperation {
@@ -10,6 +16,8 @@ pub enum ProgressionOperation {
         announce_level_up: bool,
         #[serde(default)]
         level_up_message: Option<String>,
+        #[serde(default)]
+        role_rewards: Vec<LevelRoleReward>,
     },
     Profile {
         #[serde(default)]
@@ -62,6 +70,7 @@ impl ProgressionOperation {
                 amount,
                 cooldown_seconds,
                 level_up_message,
+                role_rewards,
                 ..
             } => {
                 if !(1..=1_000).contains(amount) {
@@ -77,6 +86,15 @@ impl ProgressionOperation {
                     .is_some_and(|message| message.is_empty() || message.chars().count() > 500)
                 {
                     return Err("level-up message must contain 1 to 500 characters".to_owned());
+                }
+                if role_rewards.len() > 50 {
+                    return Err("cannot configure more than 50 role rewards".to_owned());
+                }
+                for reward in role_rewards {
+                    if reward.level <= 0 || reward.level > 1000 {
+                        return Err("role reward level must be between 1 and 1000".to_owned());
+                    }
+                    validate_snowflake(&reward.role_id)?;
                 }
                 Ok(())
             }
@@ -208,7 +226,46 @@ const fn default_reputation_cooldown() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::ProgressionOperation;
+    use super::{LevelRoleReward, ProgressionOperation};
+
+    #[test]
+    fn validates_level_role_rewards() {
+        let valid = ProgressionOperation::AwardMessageXp {
+            amount: 20,
+            cooldown_seconds: 60,
+            announce_level_up: true,
+            level_up_message: None,
+            role_rewards: vec![LevelRoleReward {
+                level: 5,
+                role_id: "100000000000000005".to_owned(),
+            }],
+        };
+        assert!(valid.validate().is_ok());
+
+        let invalid_level = ProgressionOperation::AwardMessageXp {
+            amount: 20,
+            cooldown_seconds: 60,
+            announce_level_up: true,
+            level_up_message: None,
+            role_rewards: vec![LevelRoleReward {
+                level: 0,
+                role_id: "100000000000000005".to_owned(),
+            }],
+        };
+        assert!(invalid_level.validate().is_err());
+
+        let invalid_snowflake = ProgressionOperation::AwardMessageXp {
+            amount: 20,
+            cooldown_seconds: 60,
+            announce_level_up: true,
+            level_up_message: None,
+            role_rewards: vec![LevelRoleReward {
+                level: 5,
+                role_id: "invalid-snowflake".to_owned(),
+            }],
+        };
+        assert!(invalid_snowflake.validate().is_err());
+    }
 
     #[test]
     fn rejects_unbounded_economy_operations() {
